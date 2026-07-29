@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "harness-dashboard",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["--hot", "src/server/index.ts"],
+      "port": 4000,
+      "url": "http://127.0.0.1:4000"
+    }
+  ]
+}

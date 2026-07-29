@@ -18,6 +18,89 @@ export function queryEvents(filter: Filter): EventRow[] {
   return getDb().query(sql).all(...params) as EventRow[];
 }
 
+export type RecordSort = "ts" | "cost" | "tokens" | "model" | "source";
+
+export type RecordQuery = {
+  filter: Filter;
+  /** Free text over model, session and project. */
+  search?: string;
+  sort?: RecordSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+};
+
+const SORT_COLUMNS: Record<RecordSort, string> = {
+  ts: "ts",
+  cost: "cost_api",
+  tokens: "(in_tokens + out_tokens + cache_write + cache_read)",
+  model: "model",
+  source: "source",
+};
+
+function recordWhere(q: RecordQuery): { sql: string; params: (string | number)[] } {
+  const clauses: string[] = ["ts >= ?", "ts <= ?"];
+  const params: (string | number)[] = [q.filter.range.from, q.filter.range.to];
+
+  if (q.filter.sources.length > 0) {
+    clauses.push(`source IN (${q.filter.sources.map(() => "?").join(",")})`);
+    params.push(...q.filter.sources);
+  }
+  if (q.filter.models && q.filter.models.length > 0) {
+    clauses.push(`model IN (${q.filter.models.map(() => "?").join(",")})`);
+    params.push(...q.filter.models);
+  }
+  const search = q.search?.trim();
+  if (search) {
+    clauses.push("(model LIKE ? OR session_id LIKE ? OR IFNULL(project, '') LIKE ?)");
+    const like = `%${search}%`;
+    params.push(like, like, like);
+  }
+  return { sql: clauses.join(" AND "), params };
+}
+
+/** One page of the raw ledger, sorted and filtered in SQL so it scales. */
+export function queryRecords(q: RecordQuery): EventRow[] {
+  const { sql, params } = recordWhere(q);
+  const col = SORT_COLUMNS[q.sort ?? "ts"];
+  const dir = q.dir === "asc" ? "ASC" : "DESC";
+  const limit = Math.min(Math.max(q.limit ?? 100, 1), 1000);
+  const offset = Math.max(q.offset ?? 0, 0);
+  return getDb()
+    .query(
+      `SELECT * FROM events WHERE ${sql} ORDER BY ${col} ${dir}, id ASC LIMIT ? OFFSET ?`,
+    )
+    .all(...params, limit, offset) as EventRow[];
+}
+
+/** Totals across the whole filtered set, not just the current page. */
+export function recordTotals(q: RecordQuery): {
+  rows: number;
+  tokens: number;
+  costApi: number;
+  costReported: number | null;
+  reportedRows: number;
+} {
+  const { sql, params } = recordWhere(q);
+  const row = getDb()
+    .query(
+      `SELECT COUNT(*) AS rows,
+              IFNULL(SUM(in_tokens + out_tokens + cache_write + cache_read), 0) AS tokens,
+              IFNULL(SUM(cost_api), 0) AS costApi,
+              SUM(cost_reported) AS costReported,
+              SUM(CASE WHEN cost_reported IS NOT NULL THEN 1 ELSE 0 END) AS reportedRows
+       FROM events WHERE ${sql}`,
+    )
+    .get(...params) as {
+    rows: number;
+    tokens: number;
+    costApi: number;
+    costReported: number | null;
+    reportedRows: number;
+  };
+  return row;
+}
+
 export function queryAllEvents(): EventRow[] {
   return getDb().query("SELECT * FROM events ORDER BY ts ASC").all() as EventRow[];
 }

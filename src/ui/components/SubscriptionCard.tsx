@@ -1,0 +1,171 @@
+import { useCallback, useEffect, useState } from "react";
+import type { LimitBucket } from "../../adapters/claude-subscription";
+import type { SourceSubscription } from "../../core/subscription";
+import type { Source } from "../../adapters/types";
+import { SectionLabel } from "./InfoTip";
+
+const LABELS: Record<Source, string> = {
+  "claude-code": "Claude Code",
+  opencode: "OpenCode",
+  cursor: "Cursor",
+};
+
+const ORDER: Source[] = ["claude-code", "opencode", "cursor"];
+
+/** Turn "five_hour_limit.utilization" into "Five hour limit". */
+function prettyKey(key: string): string {
+  const leaf = key.split(".").filter(Boolean).pop() ?? key;
+  const s = leaf
+    .replace(/[_\-[\]]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function fmtReset(ts: number): string {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString([], {
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+}
+
+export function SubscriptionCards() {
+  const [data, setData] = useState<SourceSubscription[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async (force = false) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/subscription${force ? "?force=1" : ""}`).then((x) =>
+        x.json(),
+      );
+      setData(r.sources ?? []);
+    } catch {
+      setData(null);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const bySource = new Map((data ?? []).map((s) => [s.source, s]));
+
+  return (
+    <section className="mb-4">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <SectionLabel info="How much of each harness's subscription you have burned. Every vendor meters differently, so these are three separate readings — not one number split three ways. Measured, not estimated from token counts.">
+          Subscription
+        </SectionLabel>
+        <button
+          className="focus-ring text-xs text-accent hover:underline disabled:opacity-50"
+          disabled={busy}
+          onClick={() => void load(true)}
+        >
+          {busy ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {ORDER.map((source) => (
+          <HarnessSubscription key={source} source={source} s={bySource.get(source)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function HarnessSubscription({ source, s }: { source: Source; s?: SourceSubscription }) {
+  const inactive = !s || s.status !== "ok";
+  return (
+    <div className={`card p-4 ${inactive ? "opacity-70" : ""}`}>
+      <div className="flex items-baseline justify-between gap-2 mb-2">
+        <div className="metric-label">{LABELS[source]}</div>
+        {s?.plan && <span className="text-xs text-muted">{s.plan}</span>}
+        {!s?.plan && s?.status === "not-applicable" && (
+          <span className="text-xs text-muted">no quota</span>
+        )}
+      </div>
+
+      {!s && <p className="text-sm text-muted">Loading…</p>}
+
+      {s && s.status === "ok" && s.buckets.length === 0 && (
+        <p className="text-xs text-muted">
+          {s.message ??
+            "Connected, but no limit buckets were recognised in the response."}
+        </p>
+      )}
+
+      {s && s.status !== "ok" && (
+        <p className={`text-xs ${s.status === "not-applicable" ? "text-muted" : "text-warn"}`}>
+          {s.message}
+        </p>
+      )}
+
+      {s && s.buckets.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {s.buckets.map((b) => (
+            <Bucket key={b.key} b={b} />
+          ))}
+        </div>
+      )}
+
+      {s?.fetchedAt && (
+        <p className="text-xs text-muted mt-3">
+          Read {new Date(s.fetchedAt).toLocaleTimeString()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Bucket({ b }: { b: LimitBucket }) {
+  const pct = b.pct == null ? null : Math.min(100, Math.max(0, b.pct));
+  const tone =
+    pct == null
+      ? "var(--color-muted)"
+      : pct >= 100
+        ? "var(--color-crit)"
+        : pct >= 80
+          ? "var(--color-warn)"
+          : "var(--color-calm)";
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="text-sm">{prettyKey(b.key)}</span>
+        <span className="tabular text-sm" style={{ color: tone }}>
+          {pct == null ? "—" : `${Math.round(pct)}%`}
+        </span>
+      </div>
+      <div
+        className="h-1.5 rounded-full overflow-hidden"
+        style={{ background: "var(--color-border)" }}
+        role="img"
+        aria-label={`${prettyKey(b.key)} ${
+          pct == null ? "unknown" : `${Math.round(pct)} percent`
+        }`}
+      >
+        <div
+          className="h-full rounded-full transition-[width] duration-300"
+          style={{ width: `${pct ?? 0}%`, background: tone }}
+        />
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
+        {b.used != null && b.limit != null && (
+          <span className="tabular">
+            {b.used.toLocaleString("en-US")} / {b.limit.toLocaleString("en-US")}
+          </span>
+        )}
+        {b.resetsAt != null && <span>resets {fmtReset(b.resetsAt)}</span>}
+      </div>
+    </div>
+  );
+}

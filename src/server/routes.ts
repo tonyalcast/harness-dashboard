@@ -5,10 +5,23 @@ import {
   resolvePresetRange,
   startOfLocalMonth,
 } from "../core/aggregate";
-import { getUnpricedModels, loadPricing } from "../core/pricing";
+import { fetchSubscriptionRaw } from "../adapters/claude-subscription";
+import { buildSubscriptionReport } from "../core/subscription";
+import { buildExplain } from "../core/explain";
+import { getUnpricedModels, loadPricing, lookupPriceDetail } from "../core/pricing";
 import { currentWindowState, readReportedClaudeWindow } from "../core/window";
 import { loadConfig, planMultiplier, updateConfig } from "../config";
-import { queryEvents, queryAllEvents, eventCount, lastIngestAt, sourceCounts } from "../db/query";
+import {
+  queryEvents,
+  queryAllEvents,
+  queryRecords,
+  recordTotals,
+  distinctModels,
+  eventCount,
+  lastIngestAt,
+  sourceCounts,
+  type RecordSort,
+} from "../db/query";
 import { getMeta } from "../db/ingest";
 import { runIngest } from "./ingest-runner";
 import { addSseClient, sseResponse } from "./sse";
@@ -157,6 +170,82 @@ export async function handleApi(req: Request): Promise<Response | null> {
   if (url.pathname === "/api/refresh" && req.method === "POST") {
     const result = await runIngest({ full: true });
     return json(result);
+  }
+
+  if (url.pathname === "/api/subscription" && req.method === "GET") {
+    const force = url.searchParams.get("force") === "1";
+    return json(await buildSubscriptionReport(force));
+  }
+
+  // Local-only escape hatch: shows the untouched payload so the parser can be
+  // adapted when the undocumented endpoint changes shape.
+  if (url.pathname === "/api/subscription/raw" && req.method === "GET") {
+    return json(await fetchSubscriptionRaw());
+  }
+
+  if (url.pathname === "/api/records" && req.method === "GET") {
+    loadPricing();
+    const filter = parseFilter(url, cfg, now);
+    const q = {
+      filter,
+      search: url.searchParams.get("q") ?? undefined,
+      sort: (url.searchParams.get("sort") as RecordSort) || "ts",
+      dir: url.searchParams.get("dir") === "asc" ? ("asc" as const) : ("desc" as const),
+      limit: Number(url.searchParams.get("limit")) || 100,
+      offset: Number(url.searchParams.get("offset")) || 0,
+    };
+    const rows = queryRecords(q);
+    const priceCache = new Map<string, ReturnType<typeof lookupPriceDetail>>();
+    const records = rows.map((r) => {
+      if (!priceCache.has(r.model)) priceCache.set(r.model, lookupPriceDetail(r.model));
+      const match = priceCache.get(r.model)!;
+      const p = match?.price;
+      const parts = {
+        in: r.in_tokens * (p?.input ?? 0),
+        out: r.out_tokens * (p?.output ?? 0),
+        cacheWrite: r.cache_write * (p?.cacheWrite ?? 0),
+        cacheRead: r.cache_read * (p?.cacheRead ?? 0),
+      };
+      return {
+        id: r.id,
+        ts: r.ts,
+        source: r.source,
+        model: r.model,
+        sessionId: r.session_id,
+        project: r.project,
+        tokens: {
+          in: r.in_tokens,
+          out: r.out_tokens,
+          cacheWrite: r.cache_write,
+          cacheRead: r.cache_read,
+          total: r.in_tokens + r.out_tokens + r.cache_write + r.cache_read,
+        },
+        priced: match != null,
+        matchedKey: match?.matchedKey ?? null,
+        costParts: parts,
+        // What the current rate table says, vs what was stored at ingest time.
+        costApi: parts.in + parts.out + parts.cacheWrite + parts.cacheRead,
+        costApiStored: r.cost_api,
+        costReported: r.cost_reported,
+      };
+    });
+    return json({
+      filter,
+      sort: q.sort,
+      dir: q.dir,
+      limit: q.limit,
+      offset: q.offset,
+      search: q.search ?? "",
+      totals: recordTotals(q),
+      models: distinctModels(),
+      records,
+    });
+  }
+
+  if (url.pathname === "/api/explain" && req.method === "GET") {
+    const filter = parseFilter(url, cfg, now);
+    loadPricing();
+    return json(buildExplain(queryEvents(filter), filter, now));
   }
 
   if (url.pathname === "/api/whatif" && req.method === "GET") {

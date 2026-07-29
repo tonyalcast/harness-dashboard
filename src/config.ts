@@ -3,7 +3,13 @@ import { join } from "path";
 import type { AppConfig } from "./adapters/types";
 import { home } from "./adapters/util";
 
-export const DATA_DIR = home(".harness-dashboard");
+/**
+ * Index location. Read lazily so tests can redirect it after import —
+ * clearEvents() against a live ~/.harness-dashboard would wipe real data.
+ */
+export function dataDir(): string {
+  return process.env.HARNESS_DASHBOARD_DATA_DIR || home(".harness-dashboard");
+}
 
 const DEFAULT_CONFIG: AppConfig = {
   plan: "max5x",
@@ -20,11 +26,11 @@ const DEFAULT_CONFIG: AppConfig = {
 };
 
 export function ensureDataDir() {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  if (!existsSync(dataDir())) mkdirSync(dataDir(), { recursive: true });
 }
 
 export function configPath() {
-  return join(DATA_DIR, "config.json");
+  return join(dataDir(), "config.json");
 }
 
 export function loadConfig(): AppConfig {

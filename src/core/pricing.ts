@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, ensureDataDir } from "../config";
+import { dataDir, ensureDataDir } from "../config";
 import fallback from "../data/pricing-fallback.json";
 import type { UsageEvent } from "../adapters/types";
 
@@ -9,6 +9,9 @@ export type ModelPrice = {
   output: number;
   cacheWrite: number;
   cacheRead: number;
+  /** True when the rate table had no cache price and we derived it from input. */
+  cacheWriteDerived?: boolean;
+  cacheReadDerived?: boolean;
 };
 
 type LiteLLMRow = {
@@ -18,30 +21,58 @@ type LiteLLMRow = {
   cache_creation_input_token_cost?: number;
 };
 
+export type PriceOrigin = "litellm-cache" | "bundled-fallback";
+
 let prices: Map<string, ModelPrice> | null = null;
 let unpriced = new Set<string>();
+let priceOrigin: PriceOrigin = "bundled-fallback";
+let priceLoadedAt: number | null = null;
+
+/** Where the active rate table came from, for the provenance view. */
+export function pricingProvenance(): {
+  origin: PriceOrigin;
+  path: string;
+  loadedAt: number | null;
+  models: number;
+} {
+  const map = loadPricing();
+  return {
+    origin: priceOrigin,
+    path: priceOrigin === "litellm-cache" ? pricingCachePath() : "bundled src/data/pricing-fallback.json",
+    loadedAt: priceLoadedAt,
+    models: map.size,
+  };
+}
 
 function pricingCachePath() {
-  return join(DATA_DIR, "pricing.json");
+  return join(dataDir(), "pricing.json");
 }
 
 export function loadPricing(forceRefresh = false): Map<string, ModelPrice> {
   if (prices && !forceRefresh) return prices;
 
   let raw: Record<string, LiteLLMRow> = fallback as Record<string, LiteLLMRow>;
+  priceOrigin = "bundled-fallback";
+  priceLoadedAt = null;
   try {
     ensureDataDir();
     const cachePath = pricingCachePath();
     if (!forceRefresh && existsSync(cachePath)) {
       try {
         raw = JSON.parse(readFileSync(cachePath, "utf8")) as Record<string, LiteLLMRow>;
+        priceOrigin = "litellm-cache";
+        priceLoadedAt = statSync(cachePath).mtimeMs;
       } catch {
         raw = fallback as Record<string, LiteLLMRow>;
+        priceOrigin = "bundled-fallback";
+        priceLoadedAt = null;
       }
     }
   } catch {
     // Offline / no home dir write access — use bundled fallback
     raw = fallback as Record<string, LiteLLMRow>;
+    priceOrigin = "bundled-fallback";
+    priceLoadedAt = null;
   }
 
   prices = indexPrices(raw);
@@ -58,9 +89,11 @@ export async function refreshPricing(): Promise<boolean> {
     if (!res.ok) return false;
     const raw = (await res.json()) as Record<string, LiteLLMRow>;
     ensureDataDir();
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    if (!existsSync(dataDir())) mkdirSync(dataDir(), { recursive: true });
     writeFileSync(pricingCachePath(), JSON.stringify(raw));
     prices = indexPrices(raw);
+    priceOrigin = "litellm-cache";
+    priceLoadedAt = Date.now();
     unpriced = new Set();
     return true;
   } catch {
@@ -81,6 +114,8 @@ function indexPrices(raw: Record<string, LiteLLMRow>): Map<string, ModelPrice> {
       output,
       cacheWrite: row.cache_creation_input_token_cost ?? input * 1.25,
       cacheRead: row.cache_read_input_token_cost ?? input * 0.1,
+      cacheWriteDerived: row.cache_creation_input_token_cost == null,
+      cacheReadDerived: row.cache_read_input_token_cost == null,
     };
     map.set(key.toLowerCase(), price);
     // Also index bare model id after provider prefix
@@ -93,24 +128,40 @@ function indexPrices(raw: Record<string, LiteLLMRow>): Map<string, ModelPrice> {
   return map;
 }
 
-export function lookupPrice(model: string): ModelPrice | null {
+export type PriceMatch = {
+  price: ModelPrice;
+  /** The rate-table key that matched. */
+  matchedKey: string;
+  /** How we got there, for the provenance view. */
+  how: "exact" | "stripped-suffix" | "provider-prefix";
+};
+
+export function lookupPriceDetail(model: string): PriceMatch | null {
   const map = loadPricing();
   const key = model.toLowerCase();
-  if (map.has(key)) return map.get(key)!;
+  if (map.has(key)) return { price: map.get(key)!, matchedKey: key, how: "exact" };
 
   // Strip date suffixes and variant tags
   const stripped = key
     .replace(/-\d{8}$/, "")
     .replace(/-(latest|preview|high|medium|low|max)$/, "");
-  if (map.has(stripped)) return map.get(stripped)!;
+  if (map.has(stripped)) {
+    return { price: map.get(stripped)!, matchedKey: stripped, how: "stripped-suffix" };
+  }
 
   // Provider-prefixed keys: anthropic/claude-… or openai/gpt-…
   for (const prefix of ["anthropic/", "openai/", "google/", "bedrock/"]) {
     const candidate = prefix + stripped;
-    if (map.has(candidate)) return map.get(candidate)!;
+    if (map.has(candidate)) {
+      return { price: map.get(candidate)!, matchedKey: candidate, how: "provider-prefix" };
+    }
   }
 
   return null;
+}
+
+export function lookupPrice(model: string): ModelPrice | null {
+  return lookupPriceDetail(model)?.price ?? null;
 }
 
 export function costForTokens(

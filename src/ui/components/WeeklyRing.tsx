@@ -1,4 +1,5 @@
 import { formatTokens } from "../format";
+import { SectionLabel } from "./InfoTip";
 
 type Props = {
   pct: number | null;
@@ -54,7 +55,12 @@ export function WeeklyRing({ pct, calibrated, tokens, baseline, onCalibrate }: P
         </text>
       </svg>
       <div className="flex-1">
-        <div className="metric-label mb-1">Weekly</div>
+        <SectionLabel
+          className="mb-1"
+          info="Estimated share of your weekly limit used so far. Anthropic does not publish the exact cap, so this is measured against your own baseline — hit Calibrate the next time you actually run out."
+        >
+          Weekly
+        </SectionLabel>
         <p className="text-sm text-muted mb-2" title="Caps aren't published; this is calibrated against your own baseline.">
           {calibrated
             ? `${formatTokens(tokens)} of ~${formatTokens(baseline)} baseline`

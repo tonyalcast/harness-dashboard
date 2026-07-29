@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { join } from "path";
-import { DATA_DIR, ensureDataDir } from "../config";
+import { dataDir, ensureDataDir } from "../config";
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS meta (
 let db: Database | null = null;
 
 export function dbPath() {
-  return join(DATA_DIR, "db.sqlite");
+  return join(dataDir(), "db.sqlite");
 }
 
 export function getDb(): Database {

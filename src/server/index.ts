@@ -10,6 +10,7 @@ if ((maj ?? 0) < 1 || ((maj ?? 0) === 1 && (min ?? 0) < 4)) {
 }
 
 import homepage from "../ui/index.html";
+import recordsPage from "../ui/records.html";
 import { ensureDataDir, loadConfig } from "../config";
 import { getDb } from "../db/schema";
 import { loadPricing, refreshPricing } from "../core/pricing";
@@ -57,6 +58,7 @@ const server = Bun.serve({
   development: process.env.NODE_ENV !== "production",
   routes: {
     "/": homepage,
+    "/records": recordsPage,
   },
   async fetch(req) {
     const api = await handleApi(req);

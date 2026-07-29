@@ -5,8 +5,11 @@ import { BurnGauge } from "./components/BurnGauge";
 import { MetricCard } from "./components/MetricCard";
 import { WeeklyRing } from "./components/WeeklyRing";
 import { SourceBadges } from "./components/SourceBadges";
+import { HarnessCards } from "./components/HarnessCards";
+import { SectionLabel } from "./components/InfoTip";
+import { ExplainPanel } from "./components/ExplainPanel";
+import { SubscriptionCards } from "./components/SubscriptionCard";
 import { TimeSeriesChart } from "./components/TimeSeriesChart";
-import { ByHarnessChart } from "./components/ByHarnessChart";
 import { ByModelChart } from "./components/ByModelChart";
 import { BlockTimeline } from "./components/BlockTimeline";
 import { Heatmap } from "./components/Heatmap";
@@ -81,6 +84,7 @@ export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
   const [tick, setTick] = useState(Date.now());
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -233,6 +237,13 @@ export function App() {
               );
             })}
             <SourceBadges adapters={health?.adapters ?? []} />
+            <a
+              className="focus-ring text-xs text-accent px-2 hover:underline"
+              href="/records"
+              title="Every ingested message, row by row, with its cost"
+            >
+              Records
+            </a>
             <button
               className="focus-ring text-xs text-muted hover:text-text px-2"
               onClick={() => void refresh()}
@@ -270,9 +281,95 @@ export function App() {
         </div>
       )}
 
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <SectionLabel info="Everything below is derived from the harness log files already on your machine. Open the breakdown to see the exact arithmetic.">
+          Consumption
+        </SectionLabel>
+        <button
+          className="focus-ring text-xs text-accent hover:underline"
+          onClick={() => setExplainOpen(true)}
+        >
+          How is this calculated?
+        </button>
+      </div>
+
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <MetricCard
+          label="Tokens"
+          value={formatTokens(summary?.tokens.total ?? 0)}
+          info="Total tokens used in the selected range. The breakdown is in (prompt), out (response), cw (cache write) and cr (cache read)."
+          hint={
+            summary
+              ? `${formatTokens(summary.tokens.in)} in · ${formatTokens(summary.tokens.out)} out · ${formatTokens(summary.tokens.cacheWrite)} cw · ${formatTokens(summary.tokens.cacheRead)} cr`
+              : undefined
+          }
+        />
+        <MetricCard
+          label="API-equiv"
+          value={formatUsd(summary?.costApi ?? 0)}
+          info="What these same tokens would cost at public API list prices. It is not what you paid — your subscription is a flat fee."
+          tone="calm"
+        />
+        <MetricCard
+          label="Reported"
+          value={summary?.costReported == null ? "—" : formatUsd(summary.costReported)}
+          info="The cost the harness itself recorded. Shows — when the harness does not report one; it is never made up."
+        />
+        <MetricCard
+          label="Cache saved"
+          value={formatUsd(summary?.cacheSavings ?? 0)}
+          info="Money not spent thanks to prompt caching: what cached reads would have cost at full price, minus what they actually cost."
+          tone="calm"
+        />
+      </section>
+
+      <section className="mb-4">
+        <SectionLabel
+          className="mb-2"
+          info="Your usage split across each coding harness: tokens, share of the total, cost and number of sessions in this range."
+        >
+          By harness
+        </SectionLabel>
+        <HarnessCards rows={summary?.bySource ?? []} />
+      </section>
+
+      <SubscriptionCards />
+
+      {empty && (
+        <div className="card p-6 mb-4 text-sm text-muted">
+          No usage yet for this filter. Run a session in Claude Code or OpenCode, then hit
+          Refresh. For Cursor, add <code className="text-text">CURSOR_SESSION_COOKIE</code> to{" "}
+          <code className="text-text">.env</code>.
+        </div>
+      )}
+
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
+        <div className="card p-4 lg:col-span-2">
+          <SectionLabel
+            className="mb-3"
+            info="Tokens consumed over the selected range, bucketed by hour or day. Use it to spot your heavy stretches."
+          >
+            Consumption over time
+          </SectionLabel>
+          <TimeSeriesChart series={summary?.series ?? []} />
+        </div>
+        <div className="card p-4 lg:col-span-1">
+          <SectionLabel
+            className="mb-3"
+            align="right"
+            info="Which models the spend went to. Each row shows API-equivalent cost, its share of the total, and tokens."
+          >
+            By model
+          </SectionLabel>
+          <ByModelChart rows={summary?.byModel ?? []} />
+        </div>
+      </section>
+
       <section className="card p-5 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <div className="metric-label">5-hour window</div>
+          <SectionLabel info="Claude usage limits reset on a rolling 5-hour window. This shows how far into the current window you are, how fast you are burning tokens, and when it resets.">
+            5-hour window
+          </SectionLabel>
           {windowState && (
             <span
               className="text-xs px-2 py-0.5 rounded border border-border text-muted"
@@ -329,43 +426,16 @@ export function App() {
         </div>
       </section>
 
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <MetricCard
-          label="Tokens"
-          value={formatTokens(summary?.tokens.total ?? 0)}
-          hint={
-            summary
-              ? `${formatTokens(summary.tokens.in)} in · ${formatTokens(summary.tokens.out)} out · ${formatTokens(summary.tokens.cacheWrite)} cw · ${formatTokens(summary.tokens.cacheRead)} cr`
-              : undefined
-          }
-        />
-        <MetricCard
-          label="API-equiv"
-          value={formatUsd(summary?.costApi ?? 0)}
-          tone="calm"
-        />
-        <MetricCard
-          label="Reported"
-          value={
-            summary?.costReported == null ? "—" : formatUsd(summary.costReported)
-          }
-        />
-        <MetricCard
-          label="Cache saved"
-          value={formatUsd(summary?.cacheSavings ?? 0)}
-          tone="calm"
-        />
-      </section>
-
-      {empty && (
-        <div className="card p-6 mb-4 text-sm text-muted">
-          No usage yet for this filter. Run a session in Claude Code or OpenCode, then hit
-          Refresh. For Cursor, add <code className="text-text">CURSOR_SESSION_COOKIE</code> to{" "}
-          <code className="text-text">.env</code>.
-        </div>
-      )}
-
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
+        <div className="card p-4 lg:col-span-2">
+          <SectionLabel
+            className="mb-3"
+            info="Today laid out from 00:00 to 24:00, with a bar for each 5-hour window you used. Wider and brighter means more tokens."
+          >
+            5h block timeline (today)
+          </SectionLabel>
+          <BlockTimeline blocks={summary?.blockTimeline ?? []} />
+        </div>
         <div className="card p-4 lg:col-span-1">
           <WeeklyRing
             pct={summary?.weekly.pct ?? null}
@@ -375,40 +445,36 @@ export function App() {
             onCalibrate={() => void calibrate()}
           />
         </div>
-        <div className="card p-4 lg:col-span-2">
-          <div className="metric-label mb-3">Consumption over time</div>
-          <TimeSeriesChart series={summary?.series ?? []} />
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
-        <div className="card p-4">
-          <div className="metric-label mb-3">By harness</div>
-          <ByHarnessChart rows={summary?.bySource ?? []} />
-        </div>
-        <div className="card p-4">
-          <div className="metric-label mb-3">By model</div>
-          <ByModelChart rows={summary?.byModel ?? []} />
-        </div>
       </section>
 
       <section className="card p-4 mb-4">
-        <div className="metric-label mb-3">5h block timeline (today)</div>
-        <BlockTimeline blocks={summary?.blockTimeline ?? []} />
-      </section>
-
-      <section className="card p-4 mb-4">
-        <div className="metric-label mb-3">Activity heatmap</div>
+        <SectionLabel
+          className="mb-3"
+          info="One square per day over the last year. The brighter the square, the more tokens you used that day."
+        >
+          Activity heatmap
+        </SectionLabel>
         <Heatmap days={summary?.heatmap ?? []} />
       </section>
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-6">
         <div className="card p-4">
-          <div className="metric-label mb-3">Top expensive sessions</div>
+          <SectionLabel
+            className="mb-3"
+            info="The individual sessions that cost the most in this range, with their project and model. Handy for finding what drained your budget."
+          >
+            Top expensive sessions
+          </SectionLabel>
           <TopSessions rows={summary?.topSessions ?? []} />
         </div>
         <div className="card p-4">
-          <div className="metric-label mb-3">What-if model swap</div>
+          <SectionLabel
+            className="mb-3"
+            align="right"
+            info="Recalculates this range's cost as if every message had run on another model. A rough estimate of what you would have saved or spent."
+          >
+            What-if model swap
+          </SectionLabel>
           <WhatIf
             models={summary?.whatIf.models ?? []}
             query={query}
@@ -434,6 +500,10 @@ export function App() {
         you paid. Weekly % is estimated against your calibrated baseline. Binds to
         127.0.0.1:{/* port fixed */}4000. Read-only on harness data. Zero telemetry.
       </footer>
+
+      {explainOpen && (
+        <ExplainPanel query={query} onClose={() => setExplainOpen(false)} />
+      )}
 
       {settingsOpen && config && (
         <SettingsPanel

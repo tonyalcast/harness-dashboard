@@ -63,8 +63,22 @@ export function createCursorAdapter(): Adapter {
 class CursorAuthError extends Error {}
 
 async function fetchCursorUsage(cookie: string): Promise<UsageEvent[]> {
+  return parseCursorPayload(await fetchCursorRawUsage(cookie));
+}
+
+/**
+ * Apex host on purpose: `www.cursor.com` 308-redirects here, and fetch drops the
+ * Cookie header across that cross-origin hop, so the request arrives
+ * unauthenticated and the API answers 401. Do not add `www.`.
+ */
+export const CURSOR_USAGE_URL = "https://cursor.com/api/usage";
+
+/** The untouched account payload. Shared with the subscription/quota reader. */
+export async function fetchCursorRawUsage(
+  cookie: string,
+): Promise<Record<string, unknown>> {
   // Undocumented account usage endpoint — shape may change without notice
-  const res = await fetch("https://www.cursor.com/api/usage", {
+  const res = await fetch(CURSOR_USAGE_URL, {
     headers: {
       Cookie: `WorkosCursorSessionToken=${cookie}`,
       Accept: "application/json",
@@ -74,9 +88,10 @@ async function fetchCursorUsage(cookie: string): Promise<UsageEvent[]> {
   if (res.status === 401 || res.status === 403) throw new CursorAuthError();
   if (!res.ok) throw new Error(`status ${res.status}`);
 
-  const body = (await res.json()) as Record<string, unknown>;
-  return parseCursorPayload(body);
+  return (await res.json()) as Record<string, unknown>;
 }
+
+export { CursorAuthError };
 
 export function parseCursorPayload(body: Record<string, unknown>): UsageEvent[] {
   const events: UsageEvent[] = [];
