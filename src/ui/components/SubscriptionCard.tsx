@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import type { LimitBucket } from "../../adapters/claude-subscription";
+import type { CursorSpendBucket } from "../../adapters/cursor-spending";
+import type { OpenCodeGoBucket } from "../../adapters/opencode-subscription";
+import { formatResetIn } from "../../adapters/opencode-subscription";
 import type { SourceSubscription } from "../../core/subscription";
 import type { Source } from "../../adapters/types";
-import { SectionLabel } from "./InfoTip";
+import { InfoTip, SectionLabel } from "./InfoTip";
 
 const LABELS: Record<Source, string> = {
   "claude-code": "Claude Code",
@@ -35,6 +38,13 @@ function fmtReset(ts: number): string {
       });
 }
 
+function fmtUsd(n: number): string {
+  return `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 export function SubscriptionCards() {
   const [data, setData] = useState<SourceSubscription[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -63,7 +73,7 @@ export function SubscriptionCards() {
     <section className="mb-4">
       <div className="flex items-center justify-between gap-3 mb-2">
         <SectionLabel info="How much of each harness's subscription you have burned. Every vendor meters differently, so these are three separate readings — not one number split three ways. Measured, not estimated from token counts.">
-          Subscription
+          Subscription by harness
         </SectionLabel>
         <button
           className="focus-ring text-xs text-accent hover:underline disabled:opacity-50"
@@ -85,6 +95,9 @@ export function SubscriptionCards() {
 
 function HarnessSubscription({ source, s }: { source: Source; s?: SourceSubscription }) {
   const inactive = !s || s.status !== "ok";
+  const cursorBuckets = source === "cursor" ? s?.cursorBuckets : undefined;
+  const openCodeBuckets = source === "opencode" ? s?.openCodeBuckets : undefined;
+
   return (
     <div className={`card p-4 ${inactive ? "opacity-70" : ""}`}>
       <div className="flex items-baseline justify-between gap-2 mb-2">
@@ -97,12 +110,32 @@ function HarnessSubscription({ source, s }: { source: Source; s?: SourceSubscrip
 
       {!s && <p className="text-sm text-muted">Loading…</p>}
 
-      {s && s.status === "ok" && s.buckets.length === 0 && (
-        <p className="text-xs text-muted">
-          {s.message ??
-            "Connected, but no limit buckets were recognised in the response."}
-        </p>
+      {s && s.status === "ok" && cursorBuckets && cursorBuckets.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {cursorBuckets.map((b) => (
+            <CursorBucket key={b.key} b={b} hardLimitUsd={s.hardLimitUsd} />
+          ))}
+        </div>
       )}
+
+      {s && s.status === "ok" && openCodeBuckets && openCodeBuckets.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {openCodeBuckets.map((b) => (
+            <OpenCodeBucket key={b.key} b={b} />
+          ))}
+        </div>
+      )}
+
+      {s &&
+        s.status === "ok" &&
+        !(cursorBuckets && cursorBuckets.length > 0) &&
+        !(openCodeBuckets && openCodeBuckets.length > 0) &&
+        s.buckets.length === 0 && (
+          <p className="text-xs text-muted">
+            {s.message ??
+              "Connected, but no limit buckets were recognised in the response."}
+          </p>
+        )}
 
       {s && s.status !== "ok" && (
         <p className={`text-xs ${s.status === "not-applicable" ? "text-muted" : "text-warn"}`}>
@@ -110,17 +143,114 @@ function HarnessSubscription({ source, s }: { source: Source; s?: SourceSubscrip
         </p>
       )}
 
-      {s && s.buckets.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {s.buckets.map((b) => (
-            <Bucket key={b.key} b={b} />
-          ))}
-        </div>
-      )}
+      {s &&
+        s.status === "ok" &&
+        !(cursorBuckets && cursorBuckets.length > 0) &&
+        !(openCodeBuckets && openCodeBuckets.length > 0) &&
+        s.buckets.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {s.buckets.map((b) => (
+              <Bucket key={b.key} b={b} />
+            ))}
+          </div>
+        )}
 
       {s?.fetchedAt && (
         <p className="text-xs text-muted mt-3">
           Read {new Date(s.fetchedAt).toLocaleTimeString()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function OpenCodeBucket({ b }: { b: OpenCodeGoBucket }) {
+  const pct = Math.min(100, Math.max(0, b.pct));
+  const tone =
+    pct >= 100
+      ? "var(--color-crit)"
+      : pct >= 80
+        ? "var(--color-warn)"
+        : "var(--color-calm)";
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="text-sm">{b.label}</span>
+        <span className="tabular text-sm" style={{ color: tone }}>
+          {Math.round(pct)}%
+        </span>
+      </div>
+      <div
+        className="h-1.5 rounded-full overflow-hidden"
+        style={{ background: "var(--color-border)" }}
+        role="img"
+        aria-label={`${b.label} ${Math.round(pct)} percent`}
+      >
+        <div
+          className="h-full rounded-full transition-[width] duration-300"
+          style={{ width: `${pct}%`, background: tone }}
+        />
+      </div>
+      <p className="mt-1 text-xs text-muted">Resets in {formatResetIn(b.resetInSec)}</p>
+    </div>
+  );
+}
+
+function CursorBucket({
+  b,
+  hardLimitUsd,
+}: {
+  b: CursorSpendBucket;
+  hardLimitUsd?: number | null;
+}) {
+  const pct = b.pct == null ? null : Math.min(100, Math.max(0, b.pct));
+  const tone =
+    pct == null
+      ? "var(--color-muted)"
+      : pct >= 100
+        ? "var(--color-crit)"
+        : pct >= 80
+          ? "var(--color-warn)"
+          : "var(--color-calm)";
+
+  const right =
+    b.unit === "usd" && b.used != null && b.limit != null
+      ? `${fmtUsd(b.used)} / ${fmtUsd(b.limit)}`
+      : pct == null
+        ? "—"
+        : `${Math.round(pct)}% used`;
+
+  return (
+    <div>
+      {b.subtitle && b.key === "onDemand" && (
+        <div className="text-xs text-muted mb-1">{b.subtitle}</div>
+      )}
+      <div className="flex items-baseline justify-between gap-2 mb-0.5">
+        <span className="text-sm inline-flex items-center gap-1.5">
+          {b.label}
+          {b.hint && <InfoTip text={b.hint} align="left" />}
+        </span>
+        <span className="tabular text-sm" style={{ color: tone }}>
+          {right}
+        </span>
+      </div>
+      {b.subtitle && b.key !== "onDemand" && (
+        <p className="text-xs text-muted mb-1">{b.subtitle}</p>
+      )}
+      <div
+        className="h-1.5 rounded-full overflow-hidden"
+        style={{ background: "var(--color-border)" }}
+        role="img"
+        aria-label={`${b.label} ${pct == null ? "unknown" : `${Math.round(pct)} percent`}`}
+      >
+        <div
+          className="h-full rounded-full transition-[width] duration-300"
+          style={{ width: `${pct ?? 0}%`, background: tone }}
+        />
+      </div>
+      {b.key === "onDemand" && hardLimitUsd != null && hardLimitUsd >= 0 && (
+        <p className="mt-1 text-xs text-muted">
+          Monthly limit · Fixed {hardLimitUsd}
         </p>
       )}
     </div>
