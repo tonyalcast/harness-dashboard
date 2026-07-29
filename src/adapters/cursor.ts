@@ -1,5 +1,9 @@
 import type { Adapter, UsageEvent } from "./types";
 import { makeEventId } from "./util";
+import {
+  fetchAllCursorUsageEventRows,
+  fetchCursorPeriodUsage,
+} from "./cursor-spending";
 
 export type CursorParseStats = {
   status: "disabled" | "ok" | "error";
@@ -18,6 +22,9 @@ export function getCursorParseStats(): CursorParseStats {
 /**
  * Unofficial Cursor usage adapter. Disabled unless CURSOR_SESSION_COOKIE is set.
  * The cookie value is never logged, stored, or returned.
+ *
+ * Ingests row-level usage from dashboard/spending (filtered usage events). The
+ * legacy `/api/usage` endpoint is empty on modern Pro plans.
  */
 export function createCursorAdapter(): Adapter {
   return {
@@ -63,7 +70,13 @@ export function createCursorAdapter(): Adapter {
 class CursorAuthError extends Error {}
 
 async function fetchCursorUsage(cookie: string): Promise<UsageEvent[]> {
-  return parseCursorPayload(await fetchCursorRawUsage(cookie));
+  const period = await fetchCursorPeriodUsage(cookie);
+  const from =
+    period.billingCycleStart ??
+    Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1);
+  const to = Date.now();
+  const rows = await fetchAllCursorUsageEventRows(cookie, from, to);
+  return parseCursorUsageEventRows(rows);
 }
 
 /**
@@ -73,11 +86,13 @@ async function fetchCursorUsage(cookie: string): Promise<UsageEvent[]> {
  */
 export const CURSOR_USAGE_URL = "https://cursor.com/api/usage";
 
-/** The untouched account payload. Shared with the subscription/quota reader. */
+/**
+ * Legacy monthly request/token totals from `/api/usage`. Kept for subscription
+ * debugging / older plans; ingest no longer relies on this endpoint.
+ */
 export async function fetchCursorRawUsage(
   cookie: string,
 ): Promise<Record<string, unknown>> {
-  // Undocumented account usage endpoint — shape may change without notice
   const res = await fetch(CURSOR_USAGE_URL, {
     headers: {
       Cookie: `WorkosCursorSessionToken=${cookie}`,
@@ -93,10 +108,49 @@ export async function fetchCursorRawUsage(
 
 export { CursorAuthError };
 
+/** Convert spending `usageEventsDisplay` rows into ingest events. */
+export function parseCursorUsageEventRows(
+  rows: Record<string, unknown>[],
+): UsageEvent[] {
+  const events: UsageEvent[] = [];
+
+  for (const row of rows) {
+    const ts = toEpoch(row.timestamp);
+    if (ts == null) continue;
+    const model = typeof row.model === "string" && row.model.trim() ? row.model.trim() : "unknown";
+    const tokenUsage =
+      row.tokenUsage && typeof row.tokenUsage === "object"
+        ? (row.tokenUsage as Record<string, unknown>)
+        : {};
+    const inTok = num(tokenUsage.inputTokens);
+    const outTok = num(tokenUsage.outputTokens);
+    const cacheWrite = num(tokenUsage.cacheWriteTokens);
+    const cacheRead = num(tokenUsage.cacheReadTokens);
+    if (inTok + outTok + cacheWrite + cacheRead <= 0) continue;
+
+    const conversationId =
+      typeof row.conversationId === "string" && row.conversationId.trim()
+        ? row.conversationId.trim()
+        : "cursor-account";
+    const costCents = numOrNull(tokenUsage.totalCents) ?? numOrNull(row.chargedCents);
+
+    events.push({
+      id: makeEventId("cursor", conversationId, model, String(ts)),
+      ts,
+      source: "cursor",
+      model,
+      sessionId: conversationId,
+      tokens: { in: inTok, out: outTok, cacheWrite, cacheRead },
+      costReported: costCents != null ? costCents / 100 : undefined,
+    });
+  }
+
+  return events;
+}
+
+/** Legacy coarse `/api/usage` parser — still covered by tests. */
 export function parseCursorPayload(body: Record<string, unknown>): UsageEvent[] {
   const events: UsageEvent[] = [];
-  // Observed shapes vary: { "gpt-4": { numRequests, numTokens, ... }, ... }
-  // or nested under startOfMonth / usage. Ingest whatever token totals we can find.
   const startMs = parseStart(body);
 
   for (const [key, val] of Object.entries(body)) {
@@ -134,11 +188,33 @@ function parseStart(body: Record<string, unknown>): number {
     if (Number.isFinite(t)) return t;
   }
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  // Bucket coarse monthly data at the start of the current UTC month
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
 }
 
+function toEpoch(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return v < 1e12 ? Math.round(v * 1000) : v;
+  }
+  if (typeof v === "string" && v.trim()) {
+    if (/^\d+$/.test(v.trim())) {
+      const n = Number(v);
+      return n < 1e12 ? Math.round(n * 1000) : n;
+    }
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+}
+
 function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  return 0;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  return null;
 }
