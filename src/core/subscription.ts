@@ -1,10 +1,18 @@
 import type { Source } from "../adapters/types";
 import {
   fetchSubscriptionUsage,
-  findLimitBuckets,
   type LimitBucket,
 } from "../adapters/claude-subscription";
-import { CursorAuthError, fetchCursorRawUsage } from "../adapters/cursor";
+import { CursorAuthError } from "../adapters/cursor";
+import {
+  fetchCursorPeriodUsage,
+  type CursorSpendBucket,
+  type CursorPeriodUsage,
+} from "../adapters/cursor-spending";
+import {
+  fetchOpenCodeGoUsage,
+  type OpenCodeGoBucket,
+} from "../adapters/opencode-subscription";
 
 export type SubscriptionStatus =
   | "ok"
@@ -20,11 +28,17 @@ export type SourceSubscription = {
   message?: string;
   plan: string | null;
   buckets: LimitBucket[];
+  /** Cursor spending pools from dashboard/spending (Included / Other / On-Demand). */
+  cursorBuckets?: CursorSpendBucket[];
+  /** OpenCode Go rolling / weekly / monthly meters. */
+  openCodeBuckets?: OpenCodeGoBucket[];
+  hardLimitUsd?: number | null;
   fetchedAt: number | null;
 };
 
-const CURSOR_CACHE_MS = 60_000;
+const CACHE_MS = 60_000;
 let cursorCache: { at: number; value: SourceSubscription } | null = null;
+let openCodeCache: { at: number; value: SourceSubscription } | null = null;
 
 /**
  * The parser is deliberately permissive, so the same limit often surfaces twice:
@@ -43,11 +57,17 @@ export function usefulBuckets(buckets: LimitBucket[]): LimitBucket[] {
 export async function buildSubscriptionReport(
   force = false,
 ): Promise<{ sources: SourceSubscription[] }> {
-  const [claude, cursor] = await Promise.all([
+  const cfg = loadConfig();
+  const [claude, opencode, cursor] = await Promise.all([
     readClaude(force),
+    readOpenCode(force),
     readCursor(force),
   ]);
-  return { sources: [claude, openCodeSubscription(), cursor] };
+  const sources = [claude, opencode, cursor].map((s) => ({
+    ...s,
+    plan: planLabel(s.source, cfg.plans[s.source]),
+  }));
+  return { sources };
 }
 
 async function readClaude(force: boolean): Promise<SourceSubscription> {
@@ -62,25 +82,37 @@ async function readClaude(force: boolean): Promise<SourceSubscription> {
   };
 }
 
-/**
- * OpenCode runs on your own provider keys, so there is no subscription pool to
- * draw down — the API-equivalent cost on the dashboard *is* the real bill.
- */
-function openCodeSubscription(): SourceSubscription {
-  return {
+async function readOpenCode(force: boolean): Promise<SourceSubscription> {
+  if (!force && openCodeCache && Date.now() - openCodeCache.at < CACHE_MS) {
+    return openCodeCache.value;
+  }
+
+  const u = await fetchOpenCodeGoUsage(force);
+  const value: SourceSubscription = {
     source: "opencode",
-    status: "not-applicable",
-    message:
-      "OpenCode runs on your own API keys, so there is no subscription quota. Its API-equivalent cost is what you actually pay.",
-    plan: null,
-    buckets: [],
-    fetchedAt: null,
+    status: u.status,
+    message: u.message,
+    plan: u.plan,
+    buckets: u.buckets.map((b) => ({
+      key: b.key,
+      pct: b.pct,
+      used: null,
+      limit: null,
+      resetsAt: Date.now() + b.resetInSec * 1000,
+    })),
+    openCodeBuckets: u.status === "ok" ? u.buckets : u.buckets.length ? u.buckets : undefined,
+    fetchedAt: u.fetchedAt,
   };
+  if (u.status === "ok" || u.status === "disabled") {
+    openCodeCache = { at: Date.now(), value };
+  }
+  return value;
 }
 
 /**
  * Cursor answered, but with no caps to draw a bar from. Report the request
  * count it did give so the card says something true instead of looking broken.
+ * Kept for tests / fallback when only the legacy /api/usage payload is present.
  */
 export function describeCursorNoQuota(raw: Record<string, unknown>): string {
   let requests = 0;
@@ -112,22 +144,41 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
     };
   }
 
-  if (!force && cursorCache && Date.now() - cursorCache.at < CURSOR_CACHE_MS) {
+  if (!force && cursorCache && Date.now() - cursorCache.at < CACHE_MS) {
     return cursorCache.value;
   }
 
   try {
-    const raw = await fetchCursorRawUsage(cookie);
-    // Cursor reports per-model request counts against maxRequestUsage.
-    const buckets = usefulBuckets(findLimitBuckets(raw));
+    const period: CursorPeriodUsage = await fetchCursorPeriodUsage(cookie, force);
+    // Mirror percent buckets into the generic LimitBucket shape so older UI
+    // paths still work; the Cursor card prefers cursorBuckets.
+    const buckets: LimitBucket[] = period.buckets
+      .filter((b) => b.key !== "onDemand")
+      .map((b) => ({
+        key: b.key,
+        pct: b.pct,
+        used: b.used,
+        limit: b.limit,
+        resetsAt: period.billingCycleEnd,
+      }));
+    const onDemand = period.buckets.find((b) => b.key === "onDemand");
+    if (onDemand && onDemand.used != null && onDemand.limit != null) {
+      buckets.push({
+        key: "onDemand",
+        pct: onDemand.pct,
+        used: onDemand.used,
+        limit: onDemand.limit,
+        resetsAt: period.billingCycleEnd,
+      });
+    }
+
     const value: SourceSubscription = {
       source: "cursor",
       status: "ok",
-      plan: typeof raw.plan === "string" ? raw.plan : null,
-      buckets,
-      // An authenticated account with no caps reports nulls, which is not a
-      // parse failure — say what the payload actually contained.
-      message: buckets.length === 0 ? describeCursorNoQuota(raw) : undefined,
+      plan: period.plan,
+      buckets: usefulBuckets(buckets),
+      cursorBuckets: period.buckets,
+      hardLimitUsd: period.hardLimitUsd,
       fetchedAt: Date.now(),
     };
     cursorCache = { at: Date.now(), value };
@@ -139,10 +190,12 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
       status: auth ? "auth" : "error",
       message: auth
         ? "Cursor session expired. Refresh CURSOR_SESSION_COOKIE in `.env`."
-        : "Cursor quota request failed. The unofficial API may have changed.",
+        : "Cursor spending request failed. The unofficial API may have changed.",
       // Keep the last good reading rather than blanking the card.
       plan: cursorCache?.value.plan ?? null,
       buckets: cursorCache?.value.buckets ?? [],
+      cursorBuckets: cursorCache?.value.cursorBuckets,
+      hardLimitUsd: cursorCache?.value.hardLimitUsd,
       fetchedAt: cursorCache?.value.fetchedAt ?? null,
     };
   }

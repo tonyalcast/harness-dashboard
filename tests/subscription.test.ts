@@ -110,30 +110,55 @@ describe("per-harness report", () => {
     expect(r.sources.map((s) => s.source)).toEqual(["claude-code", "opencode", "cursor"]);
   });
 
-  test("OpenCode reports no quota rather than a fake zero", async () => {
-    const { buildSubscriptionReport } = await import("../src/core/subscription");
-    const oc = (await buildSubscriptionReport()).sources.find(
-      (s) => s.source === "opencode",
-    )!;
-    expect(oc.status).toBe("not-applicable");
-    expect(oc.buckets).toEqual([]);
-    expect(oc.message).toContain("own API keys");
+  test("OpenCode reports no quota rather than a fake zero when unconfigured", async () => {
+    const prev = {
+      w: process.env.OPENCODE_GO_WORKSPACE_ID,
+      c: process.env.OPENCODE_GO_AUTH_COOKIE,
+    };
+    try {
+      delete process.env.OPENCODE_GO_WORKSPACE_ID;
+      delete process.env.OPENCODE_GO_AUTH_COOKIE;
+      const { buildSubscriptionReport } = await import("../src/core/subscription");
+      const oc = (await buildSubscriptionReport(true)).sources.find(
+        (s) => s.source === "opencode",
+      )!;
+      expect(oc.status).toBe("disabled");
+      expect(oc.buckets).toEqual([]);
+      expect(oc.message).toContain("OPENCODE_GO");
+    } finally {
+      if (prev.w === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
+      else process.env.OPENCODE_GO_WORKSPACE_ID = prev.w;
+      if (prev.c === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
+      else process.env.OPENCODE_GO_AUTH_COOKIE = prev.c;
+    }
   });
 
   test("unconfigured vendors say so instead of erroring", async () => {
-    const prev = { c: process.env.CLAUDE_SESSION_COOKIE, u: process.env.CURSOR_SESSION_COOKIE };
+    const prev = {
+      c: process.env.CLAUDE_SESSION_COOKIE,
+      u: process.env.CURSOR_SESSION_COOKIE,
+      ow: process.env.OPENCODE_GO_WORKSPACE_ID,
+      oc: process.env.OPENCODE_GO_AUTH_COOKIE,
+    };
     try {
       delete process.env.CLAUDE_SESSION_COOKIE;
       delete process.env.CURSOR_SESSION_COOKIE;
+      delete process.env.OPENCODE_GO_WORKSPACE_ID;
+      delete process.env.OPENCODE_GO_AUTH_COOKIE;
       const { buildSubscriptionReport } = await import("../src/core/subscription");
       const r = await buildSubscriptionReport(true);
       expect(r.sources.find((s) => s.source === "claude-code")!.status).toBe("disabled");
+      expect(r.sources.find((s) => s.source === "opencode")!.status).toBe("disabled");
       expect(r.sources.find((s) => s.source === "cursor")!.status).toBe("disabled");
     } finally {
       if (prev.c === undefined) delete process.env.CLAUDE_SESSION_COOKIE;
       else process.env.CLAUDE_SESSION_COOKIE = prev.c;
       if (prev.u === undefined) delete process.env.CURSOR_SESSION_COOKIE;
       else process.env.CURSOR_SESSION_COOKIE = prev.u;
+      if (prev.ow === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID;
+      else process.env.OPENCODE_GO_WORKSPACE_ID = prev.ow;
+      if (prev.oc === undefined) delete process.env.OPENCODE_GO_AUTH_COOKIE;
+      else process.env.OPENCODE_GO_AUTH_COOKIE = prev.oc;
     }
   });
 
@@ -173,6 +198,18 @@ describe("cursor endpoint and empty-quota copy", () => {
     expect(CURSOR_USAGE_URL).not.toContain("www.");
   });
 
+  test("spending endpoints also use the apex host", async () => {
+    const {
+      CURSOR_PERIOD_URL,
+      CURSOR_EVENTS_URL,
+      CURSOR_HARD_LIMIT_URL,
+    } = await import("../src/adapters/cursor-spending");
+    for (const url of [CURSOR_PERIOD_URL, CURSOR_EVENTS_URL, CURSOR_HARD_LIMIT_URL]) {
+      expect(url.startsWith("https://cursor.com/")).toBe(true);
+      expect(url).not.toContain("www.");
+    }
+  });
+
   test("explains an authenticated account that simply has no cap", async () => {
     const { describeCursorNoQuota } = await import("../src/core/subscription");
     const msg = describeCursorNoQuota({
@@ -192,5 +229,107 @@ describe("cursor endpoint and empty-quota copy", () => {
   test("survives a payload with no counts at all", async () => {
     const { describeCursorNoQuota } = await import("../src/core/subscription");
     expect(describeCursorNoQuota({})).toContain("0 requests");
+  });
+});
+
+describe("cursor spending parser", () => {
+  test("maps Included / Other / On-Demand from period usage", async () => {
+    const { parseCursorPeriod } = await import("../src/adapters/cursor-spending");
+    const period = parseCursorPeriod(
+      {
+        billingCycleStart: "1784310380000",
+        billingCycleEnd: "1786988780000",
+        planUsage: {
+          autoPercentUsed: 2.35,
+          apiPercentUsed: 0,
+          totalPercentUsed: 2.04,
+        },
+        spendLimitUsage: {
+          individualLimit: 1600,
+          individualRemaining: 1600,
+          limitType: "user",
+        },
+      },
+      { hardLimit: 16 },
+      { membershipType: "pro" },
+    );
+    expect(period.plan).toBe("Pro");
+    expect(period.hardLimitUsd).toBe(16);
+    const included = period.buckets.find((b) => b.key === "included")!;
+    const other = period.buckets.find((b) => b.key === "other")!;
+    const onDemand = period.buckets.find((b) => b.key === "onDemand")!;
+    expect(included.pct).toBeCloseTo(2.35, 5);
+    expect(other.pct).toBe(0);
+    expect(onDemand.used).toBe(0);
+    expect(onDemand.limit).toBe(16);
+    expect(onDemand.unit).toBe("usd");
+  });
+
+  test("parses included usage events into display rows", async () => {
+    const { parseCursorEvents } = await import("../src/adapters/cursor-spending");
+    const page = parseCursorEvents(
+      {
+        totalUsageEventsCount: 1,
+        usageEventsDisplay: [
+          {
+            timestamp: "1785354879980",
+            model: "cursor-grok-4.5-high-fast",
+            kind: "USAGE_EVENT_KIND_INCLUDED_IN_PRO",
+            usageBasedCosts: "-",
+            tokenUsage: {
+              inputTokens: 1000,
+              outputTokens: 200,
+              cacheReadTokens: 300,
+              totalCents: 12.5,
+            },
+          },
+        ],
+      },
+      { from: 1, to: 2 },
+      "1d",
+    );
+    expect(page.total).toBe(1);
+    expect(page.events).toHaveLength(1);
+    expect(page.events[0]!.type).toBe("Included");
+    expect(page.events[0]!.model).toBe("cursor-grok-4.5-high-fast");
+    expect(page.events[0]!.tokens).toBe(1500);
+    expect(page.events[0]!.costLabel).toBe("Included");
+  });
+
+  test("resolves UTC day ranges for event presets", async () => {
+    const { resolveEventRange } = await import("../src/adapters/cursor-spending");
+    const now = Date.parse("2026-07-29T18:00:00.000Z");
+    const day = resolveEventRange("1d", now);
+    expect(day.from).toBe(Date.parse("2026-07-29T00:00:00.000Z"));
+    expect(day.to).toBe(Date.parse("2026-07-29T23:59:59.999Z"));
+    const last = resolveEventRange("last-month", now);
+    expect(last.from).toBe(Date.parse("2026-06-01T00:00:00.000Z"));
+    expect(last.to).toBe(Date.parse("2026-06-30T23:59:59.999Z"));
+  });
+});
+
+describe("opencode go subscription parser", () => {
+  test("reads rolling / weekly / monthly meters from hydration HTML", async () => {
+    const { parseOpenCodeGoHtml, formatResetIn } = await import(
+      "../src/adapters/opencode-subscription"
+    );
+    const html = `
+      rollingUsage:$R[31]={status:"ok",resetInSec:18000,usagePercent:0},
+      weeklyUsage:$R[32]={status:"ok",resetInSec:359290,usagePercent:0},
+      monthlyUsage:$R[33]={status:"ok",resetInSec:591160,usagePercent:52}
+    `;
+    const buckets = parseOpenCodeGoHtml(html);
+    expect(buckets.map((b) => b.key)).toEqual(["continuous", "weekly", "monthly"]);
+    expect(buckets[0]!.pct).toBe(0);
+    expect(buckets[0]!.resetInSec).toBe(18000);
+    expect(buckets[2]!.pct).toBe(52);
+    expect(formatResetIn(18000)).toBe("5 hours 0 minutes");
+    expect(formatResetIn(359290)).toBe("4 days 3 hours");
+    expect(formatResetIn(591160)).toBe("6 days 20 hours");
+  });
+
+  test("returns empty when the page has no meters", async () => {
+    const { parseOpenCodeGoHtml } = await import("../src/adapters/opencode-subscription");
+    expect(parseOpenCodeGoHtml("<html>nope</html>")).toEqual([]);
   });
 });
