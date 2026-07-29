@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppConfig, FilterPreset, Source } from "../adapters/types";
 import { useSSE } from "./hooks/useSSE";
-import { BurnGauge } from "./components/BurnGauge";
 import { MetricCard } from "./components/MetricCard";
-import { WeeklyRing } from "./components/WeeklyRing";
 import { SourceBadges } from "./components/SourceBadges";
 import { HarnessCards } from "./components/HarnessCards";
 import { SectionLabel } from "./components/InfoTip";
@@ -11,12 +9,11 @@ import { ExplainPanel } from "./components/ExplainPanel";
 import { SubscriptionCards } from "./components/SubscriptionCard";
 import { TimeSeriesChart } from "./components/TimeSeriesChart";
 import { ByModelChart } from "./components/ByModelChart";
-import { BlockTimeline } from "./components/BlockTimeline";
 import { Heatmap } from "./components/Heatmap";
 import { TopSessions } from "./components/TopSessions";
 import { WhatIf } from "./components/WhatIf";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { formatTokens, formatUsd, formatDuration } from "./format";
+import { formatTokens, formatUsd } from "./format";
 
 type Summary = {
   tokens: { in: number; out: number; cacheWrite: number; cacheRead: number; total: number };
@@ -31,7 +28,13 @@ type Summary = {
     sessions: number;
   }>;
   byModel: Array<{ model: string; costApi: number; share: number; tokens: { total: number } }>;
-  series: Array<{ t: number; tokens: number; costApi: number; source: Source }>;
+  series: Array<{
+    t: number;
+    tokens: number;
+    costApi: number;
+    source: Source;
+    model: string;
+  }>;
   topSessions: Array<{
     sessionId: string;
     source: Source;
@@ -43,29 +46,10 @@ type Summary = {
     end: number;
   }>;
   heatmap: Array<{ day: string; tokens: number }>;
-  blockTimeline: Array<{ start: number; end: number; tokens: number; isCurrent: boolean }>;
-  weekly: {
-    tokens: number;
-    baseline: number;
-    pct: number | null;
-    estimated: true;
-    calibrated: boolean;
-  };
   budget: { monthlyBudgetUsd: number; spentApi: number; pct: number | null };
   unpricedModels: string[];
   whatIf: { currentCost: number; models: string[] };
   limitedData: boolean;
-};
-
-type WindowState = {
-  label: "Reported" | "Estimated";
-  start: number | null;
-  end: number | null;
-  tokens: number;
-  burnPerMin: number;
-  projectedDepletion: number | null;
-  remainingMs: number | null;
-  sourceNote: string;
 };
 
 type Health = {
@@ -80,13 +64,12 @@ export function App() {
   const [sources, setSources] = useState<Source[]>([]);
   const [custom, setCustom] = useState({ from: "", to: "" });
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [windowState, setWindow] = useState<WindowState | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
-  const [tick, setTick] = useState(Date.now());
   const [banner, setBanner] = useState<string | null>(null);
+  const [subscriptionKey, setSubscriptionKey] = useState(0);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -100,14 +83,12 @@ export function App() {
   }, [preset, sources, custom]);
 
   const load = useCallback(async () => {
-    const [s, w, h, c] = await Promise.all([
+    const [s, h, c] = await Promise.all([
       fetch(`/api/summary?${query}`).then((r) => r.json()),
-      fetch("/api/window").then((r) => r.json()),
       fetch("/api/health").then((r) => r.json()),
       fetch("/api/config").then((r) => r.json()),
     ]);
     setSummary(s);
-    setWindow(w);
     setHealth(h);
     setConfig(c);
   }, [query]);
@@ -119,11 +100,6 @@ export function App() {
   const { status: liveStatus } = useSSE("/api/events", () => {
     void load();
   });
-
-  useEffect(() => {
-    const id = setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   // Budget alerts via Notification API with in-page fallback
   useEffect(() => {
@@ -138,17 +114,6 @@ export function App() {
       );
     }
   }, [summary?.budget.pct, config]);
-
-  const remainingLabel = useMemo(() => {
-    if (!windowState?.end) return null;
-    const ms = Math.max(0, windowState.end - tick);
-    return formatDuration(ms);
-  }, [windowState, tick]);
-
-  async function calibrate() {
-    await fetch("/api/calibrate", { method: "POST" });
-    await load();
-  }
 
   async function refresh() {
     await fetch("/api/refresh", { method: "POST" });
@@ -168,7 +133,7 @@ export function App() {
     <div className="min-h-screen px-4 py-5 md:px-8 md:py-6 max-w-[1400px] mx-auto">
       <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">harness-dashboard</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Harness Dashboard</h1>
           <p className="text-sm text-muted mt-0.5">Fuel gauge for AI coding harnesses</p>
         </div>
         <div className="flex flex-col items-stretch md:items-end gap-2">
@@ -281,6 +246,8 @@ export function App() {
         </div>
       )}
 
+      <SubscriptionCards key={subscriptionKey} />
+
       <div className="flex items-center justify-between gap-3 mb-2">
         <SectionLabel info="Everything below is derived from the harness log files already on your machine. Open the breakdown to see the exact arithmetic.">
           Consumption
@@ -332,9 +299,6 @@ export function App() {
         </SectionLabel>
         <HarnessCards rows={summary?.bySource ?? []} />
       </section>
-
-      <SubscriptionCards />
-
       {empty && (
         <div className="card p-6 mb-4 text-sm text-muted">
           No usage yet for this filter. Run a session in Claude Code or OpenCode, then hit
@@ -347,11 +311,10 @@ export function App() {
         <div className="card p-4 lg:col-span-2">
           <SectionLabel
             className="mb-3"
-            info="Tokens consumed over the selected range, bucketed by hour or day. Use it to spot your heavy stretches."
+            info="Token usage over the selected range. Switch between one line per model × harness, or one line per harness."
           >
-            Consumption over time
-          </SectionLabel>
-          <TimeSeriesChart series={summary?.series ?? []} />
+            Tokens over time
+          </SectionLabel>          <TimeSeriesChart series={summary?.series ?? []} />
         </div>
         <div className="card p-4 lg:col-span-1">
           <SectionLabel
@@ -365,88 +328,6 @@ export function App() {
         </div>
       </section>
 
-      <section className="card p-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <SectionLabel info="Claude usage limits reset on a rolling 5-hour window. This shows how far into the current window you are, how fast you are burning tokens, and when it resets.">
-            5-hour window
-          </SectionLabel>
-          {windowState && (
-            <span
-              className="text-xs px-2 py-0.5 rounded border border-border text-muted"
-              title={windowState.sourceNote}
-            >
-              {windowState.label}
-            </span>
-          )}
-        </div>
-        <BurnGauge
-          start={windowState?.start ?? null}
-          end={windowState?.end ?? null}
-          now={tick}
-          tokens={windowState?.tokens ?? 0}
-          burnPerMin={windowState?.burnPerMin ?? 0}
-          projectedDepletion={windowState?.projectedDepletion ?? null}
-        />
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
-          <span>
-            started{" "}
-            <span className="tabular text-text">
-              {windowState?.start ? fmtTime(windowState.start) : "—"}
-            </span>
-          </span>
-          <span>
-            resets{" "}
-            <span className="tabular text-text">
-              {windowState?.end ? fmtTime(windowState.end) : "—"}
-            </span>
-          </span>
-          <span>
-            <span className="tabular text-text">{remainingLabel ?? "—"}</span> left
-          </span>
-          <span>
-            <span className="tabular text-text">
-              {formatTokens(windowState?.tokens ?? 0)}
-            </span>{" "}
-            tokens
-          </span>
-          <span>
-            <span className="tabular text-text">
-              {formatTokens(Math.round(windowState?.burnPerMin ?? 0))}
-            </span>
-            /min
-          </span>
-          {windowState?.projectedDepletion && (
-            <span>
-              projected depletion{" "}
-              <span className="tabular text-warn">
-                {fmtTime(windowState.projectedDepletion)}
-              </span>
-            </span>
-          )}
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
-        <div className="card p-4 lg:col-span-2">
-          <SectionLabel
-            className="mb-3"
-            info="Today laid out from 00:00 to 24:00, with a bar for each 5-hour window you used. Wider and brighter means more tokens."
-          >
-            5h block timeline (today)
-          </SectionLabel>
-          <BlockTimeline blocks={summary?.blockTimeline ?? []} />
-        </div>
-        <div className="card p-4 lg:col-span-1">
-          <WeeklyRing
-            pct={summary?.weekly.pct ?? null}
-            calibrated={summary?.weekly.calibrated ?? false}
-            tokens={summary?.weekly.tokens ?? 0}
-            baseline={summary?.weekly.baseline ?? 0}
-            onCalibrate={() => void calibrate()}
-          />
-        </div>
-      </section>
-
       <section className="card p-4 mb-4">
         <SectionLabel
           className="mb-3"
@@ -456,7 +337,6 @@ export function App() {
         </SectionLabel>
         <Heatmap days={summary?.heatmap ?? []} />
       </section>
-
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-6">
         <div className="card p-4">
           <SectionLabel
@@ -497,10 +377,9 @@ export function App() {
 
       <footer className="text-xs text-muted border-t border-border pt-4 pb-8">
         API-equivalent cost is what this usage would cost at public list prices — not what
-        you paid. Weekly % is estimated against your calibrated baseline. Binds to
-        127.0.0.1:{/* port fixed */}4000. Read-only on harness data. Zero telemetry.
+        you paid. Binds to 127.0.0.1:{/* port fixed */}4000. Read-only on harness data. Zero
+        telemetry.
       </footer>
-
       {explainOpen && (
         <ExplainPanel query={query} onClose={() => setExplainOpen(false)} />
       )}
@@ -511,6 +390,7 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
           onSaved={async () => {
             setSettingsOpen(false);
+            setSubscriptionKey((k) => k + 1);
             await load();
           }}
         />
@@ -519,14 +399,10 @@ export function App() {
   );
 }
 
-function fmtTime(ts: number) {
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
 function notify(msg: string, setBanner: (s: string) => void) {
   setBanner(msg);
   if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-    new Notification("harness-dashboard", { body: msg });
+    new Notification("Harness Dashboard", { body: msg });
   } else if (typeof Notification !== "undefined" && Notification.permission === "default") {
     void Notification.requestPermission();
   }

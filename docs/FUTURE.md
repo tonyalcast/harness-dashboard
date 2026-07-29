@@ -1,5 +1,6 @@
 # Future (out of scope for v1)
 
+- **Windows support** (paths, data dirs, and adapter discovery beyond macOS).
 - Per-project / per-repo breakdown (schema already carries `project`; only the UI is missing).
 - Multi-machine and custom-directory aggregation.
 - Multi-user support.

@@ -13,6 +13,7 @@ import {
   fetchOpenCodeGoUsage,
   type OpenCodeGoBucket,
 } from "../adapters/opencode-subscription";
+import { loadConfig, planLabel } from "../config";
 
 export type SubscriptionStatus =
   | "ok"
@@ -57,12 +58,17 @@ export function usefulBuckets(buckets: LimitBucket[]): LimitBucket[] {
 export async function buildSubscriptionReport(
   force = false,
 ): Promise<{ sources: SourceSubscription[] }> {
+  const cfg = loadConfig();
   const [claude, opencode, cursor] = await Promise.all([
     readClaude(force),
     readOpenCode(force),
     readCursor(force),
   ]);
-  return { sources: [claude, opencode, cursor] };
+  const sources = [claude, opencode, cursor].map((s) => ({
+    ...s,
+    plan: planLabel(s.source, cfg.plans[s.source]),
+  }));
+  return { sources };
 }
 
 async function readClaude(force: boolean): Promise<SourceSubscription> {

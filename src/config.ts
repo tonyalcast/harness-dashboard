@@ -1,6 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { AppConfig } from "./adapters/types";
+import type {
+  AppConfig,
+  ClaudePlan,
+  CursorPlan,
+  HarnessPlans,
+  OpenCodePlan,
+  Source,
+} from "./adapters/types";
 import { home } from "./adapters/util";
 
 /**
@@ -11,8 +18,15 @@ export function dataDir(): string {
   return process.env.HARNESS_DASHBOARD_DATA_DIR || home(".harness-dashboard");
 }
 
+const DEFAULT_PLANS: HarnessPlans = {
+  "claude-code": "max5x",
+  opencode: "go",
+  cursor: "pro",
+};
+
 const DEFAULT_CONFIG: AppConfig = {
-  plan: "max5x",
+  plan: DEFAULT_PLANS["claude-code"],
+  plans: { ...DEFAULT_PLANS },
   weeklyBaselineTokens: 0,
   monthlyBudgetUsd: 200,
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -60,9 +74,12 @@ export function updateConfig(patch: Partial<AppConfig>): AppConfig {
 }
 
 function mergeConfig(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
+  const plans = mergePlans(base.plans, patch);
   return {
     ...base,
     ...patch,
+    plan: plans["claude-code"],
+    plans,
     adapters: {
       ...base.adapters,
       ...(patch.adapters ?? {}),
@@ -77,7 +94,23 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
   };
 }
 
-export function planMultiplier(plan: AppConfig["plan"]): number {
+function mergePlans(base: HarnessPlans, patch: Partial<AppConfig>): HarnessPlans {
+  if (patch.plans) {
+    return {
+      "claude-code": patch.plans["claude-code"] ?? base["claude-code"],
+      opencode: patch.plans.opencode ?? base.opencode,
+      cursor: patch.plans.cursor ?? base.cursor,
+    };
+  }
+  // Legacy config.json only had a single Anthropic-oriented `plan`.
+  return {
+    ...base,
+    "claude-code": patch.plan ?? base["claude-code"],
+  };
+}
+
+/** Anthropic-style multiplier — driven by the Claude harness plan. */
+export function planMultiplier(plan: ClaudePlan): number {
   switch (plan) {
     case "pro":
       return 1;
@@ -88,4 +121,33 @@ export function planMultiplier(plan: AppConfig["plan"]): number {
     case "custom":
       return 1;
   }
+}
+
+export function planLabel(source: Source, plan: string): string {
+  if (source === "claude-code") {
+    const map: Record<ClaudePlan, string> = {
+      pro: "Pro",
+      max5x: "Max 5×",
+      max20x: "Max 20×",
+      custom: "Custom",
+    };
+    return map[plan as ClaudePlan] ?? plan;
+  }
+  if (source === "opencode") {
+    const map: Record<OpenCodePlan, string> = {
+      go: "Go",
+      api: "API keys",
+      custom: "Custom",
+    };
+    return map[plan as OpenCodePlan] ?? plan;
+  }
+  const map: Record<CursorPlan, string> = {
+    hobby: "Hobby",
+    pro: "Pro",
+    "pro-plus": "Pro Plus",
+    ultra: "Ultra",
+    business: "Business",
+    custom: "Custom",
+  };
+  return map[plan as CursorPlan] ?? plan;
 }

@@ -1,30 +1,58 @@
-# harness-dashboard
+# Harness Dashboard
 
-Local-first dashboard for AI coding-harness consumption across **Claude Code**, **OpenCode**, and **Cursor**.
+**One fuel gauge for every AI coding harness you actually use.**
 
-Single user. Runs entirely on `localhost`. No telemetry. No cloud.
+A single provider is no longer enough. Most of us bounce between Claude Code, OpenCode, Cursor — different quotas, different models, different meters — and none of their dashboards talk to each other. Harness Dashboard consolidates **three** of them today into one local view. More harnesses will land as the landscape keeps splitting.
 
-![harness-dashboard](docs/screenshot.png)
+Single user. **macOS only** for now (Windows support planned). `localhost` only. No telemetry. No cloud.
 
-> Screenshot: run `bun dev` and capture `http://127.0.0.1:4000` into `docs/screenshot.png`.
+![Harness Dashboard](docs/screenshot.png)
 
-## What it does
+> Capture: `bun dev` → open `http://127.0.0.1:4000` → save as `docs/screenshot.png`.
 
-- Tracks tokens and cost across Claude Code, OpenCode, and (optionally) Cursor
-- Shows the active **5-hour window** burn gauge with burn rate and projected depletion
-- Weekly usage against a **calibrated** baseline (always marked as an estimate)
-- API-equivalent cost vs harness-reported cost, side by side
-- Cache savings, model breakdown, what-if swap, export (CSV/JSON)
-- Live updates via SSE + `fs.watch`
+---
+
+## Why this exists
+
+Vendor UIs answer *"how much of **our** plan did you burn?"*  
+They never answer *"across everything I code with, where did the tokens go?"*
+
+This does:
+
+| | |
+|---|---|
+| **Consumption** | Tokens, API-equivalent $, reported $, cache savings — from local harness logs |
+| **Subscription by harness** | Real quota pools per vendor (Claude limits, OpenCode Go meters, Cursor spending) |
+| **Tokens over time** | Multi-line chart by model × harness, or rolled up by harness |
+| **Live** | SSE + filesystem watch — refresh as you work |
+
+Three independent readings. Not one number split three ways. Each vendor meters differently; we show that honestly.
+
+---
+
+## What you get
+
+- Unified token & cost tracking across **Claude Code**, **OpenCode**, and **Cursor**
+- **Subscription by harness** — continuous / weekly / monthly (OpenCode Go), Included / Other / On-Demand (Cursor), 5h & 7d (Claude)
+- Side-by-side **API-equivalent** vs harness-**reported** cost
+- Cache-savings accounting, model breakdown, what-if model swap
+- Activity heatmap, top sessions, CSV/JSON export
+- Live updates while you code
+
+---
 
 ## Privacy promise
 
 - **Local only** — binds to `127.0.0.1:4000`, never `0.0.0.0`
-- **Read-only on harness data** — never writes, moves, or locks a byte inside `~/.claude`, `~/.local/share/opencode`, or Cursor directories
-- **Zero telemetry** — nothing leaves your machine unless you enable the optional Cursor adapter (which calls Cursor's own account API with *your* cookie)
+- **Read-only on harness data** — never writes, moves, or locks a byte inside `~/.claude`, `~/.local/share/opencode`, or Cursor dirs
+- **Zero telemetry** — nothing leaves your machine unless *you* opt into a vendor cookie (Claude / OpenCode Go / Cursor), and those calls go only to that vendor
 - Index lives in `~/.harness-dashboard/` (SQLite + config + pricing cache)
 
+---
+
 ## Install and run
+
+**Platform:** macOS today. Windows paths and adapters will land later — see `docs/FUTURE.md`.
 
 Requires [Bun 1.4.0+](https://bun.sh).
 
@@ -32,90 +60,72 @@ Requires [Bun 1.4.0+](https://bun.sh).
 git clone <repo> && cd harness-dashboard
 bun install
 bun dev          # http://127.0.0.1:4000
-bun start        # production mode
+bun start        # production
 bun test
-bun run build    # standalone binary in dist/
+bun run build    # standalone binary → dist/
 ```
 
-Port **4000** is fixed — easy to remember, avoids the crowded 3000/8080/5173 range.
+Port **4000** is fixed on purpose.
 
-## Enabling Cursor (optional, unofficial, fragile)
+Claude Code and OpenCode light up from local logs with zero config. Optional vendor cookies unlock **subscription** meters (and Cursor row-level usage) — see `.env.example`.
 
-1. Copy `.env.example` → `.env`
-2. Set `CURSOR_SESSION_COOKIE` to your Cursor session token (from browser cookies)
-3. Restart the dashboard
-
-The cookie is **never** logged, written to SQLite, returned by any API route, or rendered in the UI.
-
-This path uses an undocumented Cursor account endpoint. It will break without warning. On failure the UI shows: *Cursor session expired. Refresh the cookie in `.env`.* Last good data is kept.
+---
 
 ## How cost is calculated
 
-Two numbers, never conflated:
+Two numbers. Never conflated.
 
 | Number | Meaning |
 |---|---|
-| **API-equivalent** | What the same tokens would cost at public list rates (LiteLLM pricing, with a bundled offline fallback). Always computed. |
-| **Reported** | What the harness itself recorded, when trustworthy. Rendered as `—` when absent. Never fabricated. |
+| **API-equivalent** | What the same tokens would cost at public list rates. Always computed. |
+| **Reported** | What the harness itself recorded, when trustworthy. Shown as `—` when absent — never invented. |
 
-OpenCode often writes `cost: 0` on nonzero-token messages — we treat that as missing, not free.
+OpenCode often writes `cost: 0` on nonzero-token messages — we treat that as missing, not free. Cache write/read are priced separately. Unknown models cost `$0` and surface under an unpriced-models note.
 
-Cache writes and cache reads are priced separately. Unknown models cost `$0` and appear under an "unpriced models" note.
+---
 
-## Real subscription usage (optional, unofficial, fragile)
+## Subscription by harness (optional cookies)
 
-The token totals above are what you *consumed*. They are not the same thing as how much of
-your **subscription** you have burned — Anthropic weights the two differently, and cache
-reads (often >90% of raw token volume) barely count against your limits.
+Token totals are what you *consumed*. Subscription meters are what each vendor *counts against your plan* — weighted differently, often ignoring most cache reads.
 
-To read the real numbers — the ones behind `claude.ai/settings/usage` and the `/usage`
-command — set two values in `.env` yourself:
+Copy `.env.example` → `.env` and fill only what you need:
 
-1. Open <https://claude.ai/settings/usage> while logged in
-2. DevTools → Application → Cookies → `https://claude.ai` → copy `sessionKey` into
-   `CLAUDE_SESSION_COOKIE`
-3. DevTools → Network → press **Refresh** on that page → the request goes to
-   `/api/organizations/<ORG_ID>/usage` → copy that `<ORG_ID>` into `CLAUDE_ORG_ID`
-4. Restart the dashboard
+| Harness | Env | Source of truth |
+|---|---|---|
+| **Claude Code** | `CLAUDE_SESSION_COOKIE` + `CLAUDE_ORG_ID` | `claude.ai` usage API |
+| **OpenCode Go** | `OPENCODE_GO_WORKSPACE_ID` + `OPENCODE_GO_AUTH_COOKIE` | Workspace `/go` page |
+| **Cursor** | `CURSOR_SESSION_COOKIE` | Spending + usage-events APIs |
 
-The **Subscription** row then sits directly under Consumption, split by harness so it
-lines up with the By harness cards above it:
+How to grab each value is spelled out in `.env.example` (DevTools → cookies / network). Cookies are **never** logged, written to SQLite, returned by any API route, or rendered in the UI.
 
-| Harness | What it shows |
-|---|---|
-| **Claude Code** | Your real 5-hour and 7-day limit usage, with reset times |
-| **OpenCode** | Nothing to show — it runs on your own API keys, so there is no quota pool. Its API-equivalent cost *is* your bill |
-| **Cursor** | Request quota against your plan, when `CURSOR_SESSION_COOKIE` is set |
+These are undocumented endpoints. They can break without notice. On failure the card keeps the last good reading and says why.
 
-These are three independent readings, not one number split three ways — each vendor meters
-differently.
+**When a payload shape changes:** `GET /api/subscription/raw` (localhost) returns the untouched Claude payload for parser tweaks.
 
-Same caveats as the Cursor adapter: this is an undocumented endpoint and it will break
-without warning. On failure the card keeps the last good reading and says why. The cookie
-is **never** logged, written to SQLite, returned by any API route, or rendered in the UI.
+---
 
-**When the shape changes:** the parser looks for anything limit-shaped rather than fixed
-field names, so a rename degrades to fewer buckets instead of a crash. `GET
-/api/subscription/raw` returns the untouched payload (localhost only) so you can see what
-actually came back and adjust `findBuckets` in `src/adapters/claude-subscription.ts`.
+## Roadmap posture
 
-## Weekly percentages are estimates
+Three harnesses today. The product assumption is durable: **the multi-provider workflow is the default**, not the exception. Expect more adapters as new coding agents matter.
 
-Anthropic no longer publishes absolute weekly caps. Configure your plan (`pro` / `max5x` / `max20x`) and a baseline. The ring shows **est.** with a tooltip.
+**Platform:** macOS is supported now; **Windows support is planned**.
 
-**Calibrate:** when you actually hit a limit, click Calibrate — the current 7-day token total becomes the new baseline (adjusted for plan multiplier).
+See also `docs/FUTURE.md` and `docs/LIMITS.md`.
+
+---
 
 ## Production dependencies
 
 | Package | Why |
 |---|---|
-| `react` | UI state and composition |
-| `react-dom` | DOM renderer for React 19 |
-| `react-is` | Peer required by Recharts for element type checks |
-| `recharts` | Time-series and bar charts |
-| `lucide-react` | Tree-shakeable icons |
-| `tailwindcss` | Utility styling (CSS-first v4) |
-| `bun-plugin-tailwind` | Tailwind processing inside Bun.serve HTML imports |
+| `react` / `react-dom` | UI |
+| `react-is` | Peer for Recharts |
+| `recharts` | Time-series charts |
+| `lucide-react` | Icons |
+| `tailwindcss` | Styling (v4) |
+| `bun-plugin-tailwind` | Tailwind inside Bun.serve HTML imports |
+
+---
 
 ## License
 

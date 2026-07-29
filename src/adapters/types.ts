@@ -22,10 +22,26 @@ export interface Adapter {
   watchPaths(): string[];
 }
 
+/** @deprecated Prefer ClaudePlan via config.plans["claude-code"]. */
 export type Plan = "pro" | "max5x" | "max20x" | "custom";
 
+export type ClaudePlan = "pro" | "max5x" | "max20x" | "custom";
+export type OpenCodePlan = "go" | "api" | "custom";
+export type CursorPlan = "hobby" | "pro" | "pro-plus" | "ultra" | "business" | "custom";
+
+export type HarnessPlans = {
+  "claude-code": ClaudePlan;
+  opencode: OpenCodePlan;
+  cursor: CursorPlan;
+};
+
 export type AppConfig = {
-  plan: Plan;
+  /**
+   * Legacy single plan (Anthropic-oriented). Kept in sync with
+   * plans["claude-code"] for older callers.
+   */
+  plan: ClaudePlan;
+  plans: HarnessPlans;
   weeklyBaselineTokens: number;
   monthlyBudgetUsd: number;
   timezone: string;

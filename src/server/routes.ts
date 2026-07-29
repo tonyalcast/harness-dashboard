@@ -69,7 +69,7 @@ export function buildSummary(filter: Filter, cfg: AppConfig, now = Date.now()) {
     now,
     timezone: cfg.timezone,
     weeklyBaselineTokens: cfg.weeklyBaselineTokens,
-    planMultiplier: planMultiplier(cfg.plan),
+    planMultiplier: planMultiplier(cfg.plans["claude-code"]),
     monthlyBudgetUsd: cfg.monthlyBudgetUsd,
     unpricedModels: getUnpricedModels(),
   });
@@ -81,7 +81,9 @@ export function buildSummary(filter: Filter, cfg: AppConfig, now = Date.now()) {
     0,
   );
   const baseline =
-    cfg.weeklyBaselineTokens > 0 ? cfg.weeklyBaselineTokens * planMultiplier(cfg.plan) : 0;
+    cfg.weeklyBaselineTokens > 0
+      ? cfg.weeklyBaselineTokens * planMultiplier(cfg.plans["claude-code"])
+      : 0;
   summary.weekly = {
     tokens: weekTokens,
     baseline,
@@ -161,7 +163,7 @@ export async function handleApi(req: Request): Promise<Response | null> {
       0,
     );
     // Store as baseline for current plan multiplier so raw baseline is total/multiplier
-    const mult = planMultiplier(cfg.plan);
+    const mult = planMultiplier(cfg.plans["claude-code"]);
     const baseline = mult > 0 ? Math.round(total / mult) : total;
     const next = updateConfig({ weeklyBaselineTokens: baseline });
     return json({ weeklyBaselineTokens: next.weeklyBaselineTokens, weekTokens: total });

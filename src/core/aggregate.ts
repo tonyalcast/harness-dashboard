@@ -30,7 +30,13 @@ export type SummaryView = {
     share: number;
     events: number;
   }>;
-  series: Array<{ t: number; tokens: number; costApi: number; source: Source }>;
+  series: Array<{
+    t: number;
+    tokens: number;
+    costApi: number;
+    source: Source;
+    model: string;
+  }>;
   topSessions: Array<{
     sessionId: string;
     source: Source;
@@ -158,18 +164,27 @@ export function aggregate(
     })
     .sort((a, b) => b.costApi - a.costApi);
 
-  // Hourly series for charts
+  // Hourly (or coarser) series per model × harness for the multi-line chart
   const bucketMs = pickBucket(filter.range.from, filter.range.to);
-  const seriesMap = new Map<string, { t: number; tokens: number; costApi: number; source: Source }>();
+  const seriesMap = new Map<
+    string,
+    { t: number; tokens: number; costApi: number; source: Source; model: string }
+  >();
   for (const r of rows) {
     const t = Math.floor(r.ts / bucketMs) * bucketMs;
-    const key = `${t}|${r.source}`;
-    const cur = seriesMap.get(key) ?? { t, tokens: 0, costApi: 0, source: r.source };
+    const key = `${t}|${r.source}|${r.model}`;
+    const cur = seriesMap.get(key) ?? {
+      t,
+      tokens: 0,
+      costApi: 0,
+      source: r.source,
+      model: r.model,
+    };
     cur.tokens += r.in_tokens + r.out_tokens + r.cache_write + r.cache_read;
     cur.costApi += r.cost_api;
     seriesMap.set(key, cur);
   }
-  const series = [...seriesMap.values()].sort((a, b) => a.t - b.t);
+  const series = [...seriesMap.values()].sort((a, b) => a.t - b.t || a.model.localeCompare(b.model));
 
   // Top sessions
   const sessMap = new Map<string, EventRow[]>();
@@ -255,7 +270,7 @@ export function aggregate(
     },
     unpricedModels: opts.unpricedModels ?? [],
     whatIf: { currentCost: costApi, models },
-    limitedData: rows.some((r) => r.source === "cursor"),
+    limitedData: false,
   };
 }
 
