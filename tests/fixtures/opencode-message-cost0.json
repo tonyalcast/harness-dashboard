@@ -1,0 +1,14 @@
+{
+  "id": "msg_oc_1",
+  "role": "assistant",
+  "sessionID": "ses_legacy_1",
+  "modelID": "claude-sonnet-4-high",
+  "cost": 0,
+  "tokens": {
+    "input": 100,
+    "output": 40,
+    "reasoning": 10,
+    "cache": { "write": 50, "read": 200 }
+  },
+  "time": { "created": 1719800000000 }
+}

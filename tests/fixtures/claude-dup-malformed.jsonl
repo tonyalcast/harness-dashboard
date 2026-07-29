@@ -1,0 +1,4 @@
+{"type":"assistant","uuid":"a1","requestId":"req_dup","timestamp":"2026-07-01T11:00:00.000Z","sessionId":"sess-dup","message":{"id":"msg_same","model":"claude-sonnet-4-20250514","role":"assistant","usage":{"input_tokens":1000,"output_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"type":"assistant","uuid":"a2","requestId":"req_dup","timestamp":"2026-07-01T11:00:00.100Z","sessionId":"sess-dup","message":{"id":"msg_same","model":"claude-sonnet-4-20250514","role":"assistant","usage":{"input_tokens":1000,"output_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+this is not json
+{"type":"assistant","uuid":"a3","requestId":"req_3","timestamp":"2026-07-01T11:01:00.000Z","sessionId":"sess-dup","message":{"id":"msg_3","model":"unknown-model-xyz","role":"assistant","usage":{"input_tokens":5,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}

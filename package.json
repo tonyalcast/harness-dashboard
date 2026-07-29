@@ -1,0 +1,35 @@
+{
+  "name": "harness-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Local-first dashboard for AI coding-harness token and cost tracking",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "dev": "bun --hot src/server/index.ts",
+    "start": "NODE_ENV=production bun src/server/index.ts",
+    "test": "bun test",
+    "build": "bun build --compile --outfile=dist/harness-dashboard src/server/index.ts"
+  },
+  "dependencies": {
+    "bun-plugin-tailwind": "^0.1.2",
+    "lucide-react": "^0.525.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-is": "^19.2.8",
+    "recharts": "^3.1.0",
+    "tailwindcss": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.18",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "bun": "npm:empty-npm-package@1.0.0"
+  }
+}
