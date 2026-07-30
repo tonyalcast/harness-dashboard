@@ -4,6 +4,17 @@ All notable changes to Harness Dashboard are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-07-29
+
+### Added
+
+- **Reset countdowns** — Subscription cards show a prominent `Resets in 5h` (short relative format) for the primary window on each harness.
+- **Compact HUD** — Header button **Compact** opens `/compact`: a small always-on-top window (desktop) with subscription meters, Refresh, and Expand. Frameless, semi-transparent, draggable; position saved in `~/.harness-dashboard/compact-bounds.json`. Works in the browser as a normal small window too.
+
+### Changed
+
+- Per-bucket reset labels use the same short relative format (`resets in 5h`).
+
 ## [1.1.0] - 2026-07-29
 
 ### Added

@@ -2,7 +2,7 @@
 
 **One fuel gauge for every AI coding harness you actually use.**
 
-**v1.1.0** · [Changelog](CHANGELOG.md)
+**v1.2.0** · [Changelog](CHANGELOG.md)
 
 A single provider is no longer enough. Most of us bounce between Claude Code, OpenCode, Cursor — different quotas, different models, different meters — and none of their dashboards talk to each other. Harness Dashboard consolidates **three** of them today into one local view. More harnesses will land as the landscape keeps splitting.
 
@@ -10,7 +10,10 @@ Single user. **macOS only** for now (Windows support planned). `localhost` only.
 
 ![Harness Dashboard](docs/screenshot.png)
 
-> Capture: `bun dev` → open `http://127.0.0.1:4000` → save as `docs/screenshot.png`.
+![Compact HUD](docs/screenshot-compact.png)
+
+> Full dashboard: `bun dev` → `http://127.0.0.1:4000` → `docs/screenshot.png`.  
+> Compact HUD: header **Compact** (or `/compact`) → `docs/screenshot-compact.png`.
 
 ---
 
@@ -82,6 +85,10 @@ bun run desktop:build    # .app in dist/desktop/mac-arm64/
 ```
 
 The packaged app embeds the compiled Bun server on port **47831** (browser/terminal dev stays on **4000**).
+
+From the dashboard header, **Compact** opens a small always-on-top HUD (subscription meters + Refresh). Drag it to a corner; expand anytime to the full window.
+
+![Compact HUD](docs/screenshot-compact.png)
 
 For the **desktop app**, cookies are read from your project `.env` automatically (and copied to `~/.harness-dashboard/.env` for the packaged server). You can also set them in **Settings** — they persist in `~/.harness-dashboard/secrets.json`.
 
