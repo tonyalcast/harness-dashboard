@@ -79,7 +79,9 @@ bun run desktop:dev      # dev: starts Bun server + Electron window
 bun run desktop:build    # .app in dist/desktop/mac-arm64/
 ```
 
-The packaged app embeds the compiled Bun server on port **47831** (browser/terminal dev stays on **4000**). Cookies from your project `.env` are synced to `~/.harness-dashboard/.env` for the packaged server.
+The packaged app embeds the compiled Bun server on port **47831** (browser/terminal dev stays on **4000**).
+
+For the **desktop app**, cookies are read from your project `.env` automatically (and copied to `~/.harness-dashboard/.env` for the packaged server). You can also set them in **Settings** — they persist in `~/.harness-dashboard/secrets.json`.
 
 ---
 
@@ -100,7 +102,7 @@ OpenCode often writes `cost: 0` on nonzero-token messages — we treat that as m
 
 Token totals are what you *consumed*. Subscription meters are what each vendor *counts against your plan* — weighted differently, often ignoring most cache reads.
 
-Copy `.env.example` → `.env` and fill only what you need:
+Copy `.env.example` → `.env` and fill only what you need — or enter the same values in **Settings → Subscription cookies** (saved to `~/.harness-dashboard/secrets.json`, works in browser and desktop).
 
 | Harness | Env | Source of truth |
 |---|---|---|

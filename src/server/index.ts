@@ -9,16 +9,19 @@ if ((maj ?? 0) < 1 || ((maj ?? 0) === 1 && (min ?? 0) < 4)) {
   process.exit(1);
 }
 
+import { loadHarnessEnv } from "../load-env";
 import homepage from "../ui/index.html";
 import recordsPage from "../ui/records.html";
 import { ensureDataDir, loadConfig } from "../config";
 import { getDb } from "../db/schema";
 import { loadPricing, refreshPricing } from "../core/pricing";
 import { HOST, PORT, SSE_HEARTBEAT_MS } from "./constants";
-import { handleApi, buildSummary } from "./routes";
+import { handleApi } from "./routes";
 import { runIngest } from "./ingest-runner";
 import { broadcast, heartbeat } from "./sse";
 import { startWatching } from "./watch";
+
+loadHarnessEnv();
 
 ensureDataDir();
 getDb();

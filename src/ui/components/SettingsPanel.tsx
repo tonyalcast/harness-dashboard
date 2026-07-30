@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   AppConfig,
   ClaudePlan,
@@ -6,12 +6,19 @@ import type {
   OpenCodePlan,
   Source,
 } from "../../adapters/types";
+import { SECRET_KEYS, type HarnessSecrets, type SecretKey } from "../../secrets-keys";
 import { SectionLabel } from "./InfoTip";
 
 type Props = {
   config: AppConfig;
   onClose: () => void;
   onSaved: () => void;
+};
+
+type SecretsSnapshot = {
+  secrets: HarnessSecrets;
+  active: Record<SecretKey, boolean>;
+  fromEnv: Record<SecretKey, boolean>;
 };
 
 const HARNESS_LABEL: Record<Source, string> = {
@@ -42,6 +49,45 @@ const CURSOR_PLANS: { value: CursorPlan; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 
+const SECRET_FIELDS: Array<{
+  key: SecretKey;
+  label: string;
+  hint: string;
+  multiline?: boolean;
+}> = [
+  {
+    key: "CLAUDE_SESSION_COOKIE",
+    label: "Claude session cookie",
+    hint: "sessionKey from claude.ai cookies",
+  },
+  {
+    key: "CLAUDE_ORG_ID",
+    label: "Claude org ID",
+    hint: "Organization id from claude.ai usage API",
+  },
+  {
+    key: "OPENCODE_GO_WORKSPACE_ID",
+    label: "OpenCode workspace ID",
+    hint: "From opencode.ai/workspace/<id>/go",
+  },
+  {
+    key: "OPENCODE_GO_AUTH_COOKIE",
+    label: "OpenCode auth cookie",
+    hint: "auth cookie from opencode.ai",
+    multiline: true,
+  },
+  {
+    key: "CURSOR_SESSION_COOKIE",
+    label: "Cursor session cookie",
+    hint: "WorkosCursorSessionToken from cursor.com",
+    multiline: true,
+  },
+];
+
+function emptySecrets(): Record<SecretKey, string> {
+  return Object.fromEntries(SECRET_KEYS.map((key) => [key, ""])) as Record<SecretKey, string>;
+}
+
 export function SettingsPanel({ config, onClose, onSaved }: Props) {
   const [form, setForm] = useState<AppConfig>({
     ...config,
@@ -51,7 +97,23 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
       cursor: config.plans?.cursor ?? "pro",
     },
   });
+  const [secrets, setSecrets] = useState<Record<SecretKey, string>>(emptySecrets);
+  const [fromEnv, setFromEnv] = useState<Record<SecretKey, boolean>>(emptySecrets as Record<SecretKey, boolean>);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void fetch("/api/secrets")
+      .then((r) => r.json())
+      .then((data: SecretsSnapshot) => {
+        setSecrets({
+          ...emptySecrets(),
+          ...Object.fromEntries(
+            SECRET_KEYS.map((key) => [key, data.secrets[key] ?? ""]),
+          ),
+        });
+        setFromEnv(data.fromEnv ?? (emptySecrets() as Record<SecretKey, boolean>));
+      });
+  }, []);
 
   async function save() {
     setSaving(true);
@@ -59,11 +121,22 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
       ...form,
       plan: form.plans["claude-code"],
     };
-    await fetch("/api/config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const secretsPayload = Object.fromEntries(
+      SECRET_KEYS.map((key) => [key, secrets[key] ?? ""]),
+    ) as HarnessSecrets;
+
+    await Promise.all([
+      fetch("/api/secrets", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(secretsPayload),
+      }),
+      fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    ]);
     setSaving(false);
     onSaved();
   }
@@ -83,6 +156,37 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
             Close
           </button>
         </div>
+
+        <section className="mb-5">
+          <SectionLabel
+            className="mb-3"
+            info="Session cookies for subscription meters. Saved locally in ~/.harness-dashboard/secrets.json (never sent anywhere except the vendor APIs). .env still works and takes precedence unless you save a value here."
+          >
+            Subscription cookies
+          </SectionLabel>
+
+          <div className="flex flex-col gap-3">
+            {SECRET_FIELDS.map((field) => (
+              <SecretField
+                key={field.key}
+                label={field.label}
+                hint={field.hint}
+                multiline={field.multiline}
+                value={secrets[field.key]}
+                fromEnv={fromEnv[field.key]}
+                onChange={(value) =>
+                  setSecrets((prev) => ({ ...prev, [field.key]: value }))
+                }
+              />
+            ))}
+          </div>
+
+          <p className="text-xs text-muted mt-3 leading-relaxed">
+            Values persist across restarts. Leave blank to fall back to{" "}
+            <code className="text-text">.env</code> when present. See{" "}
+            <code className="text-text">.env.example</code> for how to grab each cookie.
+          </p>
+        </section>
 
         <section className="mb-5">
           <SectionLabel
@@ -179,7 +283,7 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
         <section className="mb-5">
           <SectionLabel
             className="mb-3"
-            info="Toggle which harness adapters feed local consumption. Subscription cookies still live in .env — never in this panel."
+            info="Toggle which harness adapters feed local consumption."
           >
             Adapters
           </SectionLabel>
@@ -202,14 +306,6 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
               {HARNESS_LABEL[key]}
             </label>
           ))}
-
-          <p className="text-xs text-muted mt-3 leading-relaxed">
-            Optional subscription cookies go in <code className="text-text">.env</code> only
-            (<code className="text-text">CLAUDE_*</code>,{" "}
-            <code className="text-text">OPENCODE_GO_*</code>,{" "}
-            <code className="text-text">CURSOR_SESSION_COOKIE</code>). They are never stored
-            in config or SQLite.
-          </p>
         </section>
 
         <div className="flex gap-2">
@@ -230,6 +326,57 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SecretField({
+  label,
+  hint,
+  value,
+  fromEnv,
+  multiline,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  fromEnv: boolean;
+  multiline?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const shared =
+    "focus-ring w-full bg-bg border border-border rounded px-3 py-2 text-sm font-mono text-xs";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <label className="block text-xs text-muted">{label}</label>
+        {fromEnv && !value.trim() && (
+          <span className="text-[10px] text-calm uppercase tracking-wide">via .env</span>
+        )}
+      </div>
+      {multiline ? (
+        <textarea
+          className={`${shared} min-h-[72px] resize-y`}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={hint}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      ) : (
+        <input
+          type="password"
+          className={shared}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={hint}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      )}
+      <p className="text-[11px] text-muted mt-1">{hint}</p>
     </div>
   );
 }

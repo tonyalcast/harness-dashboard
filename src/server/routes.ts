@@ -11,6 +11,13 @@ import { buildExplain } from "../core/explain";
 import { getUnpricedModels, loadPricing, lookupPriceDetail } from "../core/pricing";
 import { currentWindowState, readReportedClaudeWindow } from "../core/window";
 import { loadConfig, planMultiplier, updateConfig } from "../config";
+import { refreshHarnessCredentials } from "../load-env";
+import {
+  loadSecrets,
+  saveSecrets,
+  secretsSnapshot,
+  type HarnessSecrets,
+} from "../secrets";
 import {
   queryEvents,
   queryAllEvents,
@@ -150,9 +157,20 @@ export async function handleApi(req: Request): Promise<Response | null> {
 
   if (url.pathname === "/api/config" && req.method === "PUT") {
     const body = (await req.json()) as Partial<AppConfig>;
-    // Never accept or echo cookie material through config
     const next = updateConfig(body);
     return json(next);
+  }
+
+  if (url.pathname === "/api/secrets" && req.method === "GET") {
+    return json(secretsSnapshot());
+  }
+
+  if (url.pathname === "/api/secrets" && req.method === "PUT") {
+    const body = (await req.json()) as HarnessSecrets;
+    const stored = loadSecrets();
+    const next = saveSecrets({ ...stored, ...body });
+    refreshHarnessCredentials();
+    return json({ secrets: next, active: secretsSnapshot().active });
   }
 
   if (url.pathname === "/api/calibrate" && req.method === "POST") {
