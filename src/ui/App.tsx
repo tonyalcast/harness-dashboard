@@ -20,6 +20,7 @@ import { WhatIf } from "./components/WhatIf";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { DashboardToolbar } from "./components/DashboardToolbar";
 import { formatTokens, formatUsd } from "./format";
+import { HARNESS_COLOR_CSS } from "./harness-colors";
 
 type Summary = {
   tokens: { in: number; out: number; cacheWrite: number; cacheRead: number; total: number };
@@ -270,9 +271,17 @@ export function App() {
                     key={s}
                     className={`focus-ring text-xs px-2 py-1 rounded border transition-colors duration-150 ${
                       active
-                        ? "border-accent/50 text-text"
+                        ? "text-text"
                         : "border-border text-muted opacity-60"
                     }`}
+                    style={
+                      active
+                        ? {
+                            borderColor: HARNESS_COLOR_CSS[s],
+                            color: HARNESS_COLOR_CSS[s],
+                          }
+                        : undefined
+                    }
                     onClick={() => toggleSource(s)}
                   >
                     {s === "claude-code" ? "CC" : s === "opencode" ? "OC" : "Cursor"}

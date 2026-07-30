@@ -5,6 +5,7 @@ import type { OpenCodeGoBucket } from "../../adapters/opencode-subscription";
 import { formatResetAtShort } from "../../core/reset-format";
 import type { SourceSubscription } from "../../core/subscription";
 import type { Source } from "../../adapters/types";
+import { HARNESS_COLOR_CSS } from "../harness-colors";
 import { InfoTip, SectionLabel } from "./InfoTip";
 
 const LABELS: Record<Source, string> = {
@@ -140,6 +141,7 @@ function HarnessSubscription({
 
   if (compact) {
     const pct = s?.primaryPct;
+    const harness = HARNESS_COLOR_CSS[source];
     const tone =
       pct == null
         ? "var(--color-muted)"
@@ -147,13 +149,19 @@ function HarnessSubscription({
           ? "var(--color-crit)"
           : pct >= 80
             ? "var(--color-warn)"
-            : "var(--color-calm)";
+            : harness;
     const bar = pct == null ? 0 : Math.min(100, Math.max(0, pct));
 
     return (
       <div className={`compact-row ${inactive ? "opacity-60" : ""}`}>
         <div className="flex items-center justify-between gap-2 mb-0.5">
-          <span className="text-[11px] font-medium truncate">{shortLabel}</span>
+          <span className="text-[11px] font-medium truncate flex items-center gap-1.5">
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: harness }}
+            />
+            <span style={{ color: harness }}>{shortLabel}</span>
+          </span>
           <div className="flex items-center gap-1.5 tabular text-[11px] shrink-0">
             {s?.status === "ok" && pct != null ? (
               <span style={{ color: tone }}>{Math.round(pct)}%</span>
@@ -181,9 +189,17 @@ function HarnessSubscription({
   }
 
   return (
-    <div className={`card p-4 ${inactive ? "opacity-70" : ""}`}>
+    <div
+      className={`card p-4 ${inactive ? "opacity-70" : ""}`}
+      style={{ borderTop: `2px solid ${HARNESS_COLOR_CSS[source]}` }}
+    >
       <div className="flex items-baseline justify-between gap-2 mb-2">
-        <div className="metric-label">{LABELS[source]}</div>
+        <div
+          className="metric-label"
+          style={{ color: HARNESS_COLOR_CSS[source] }}
+        >
+          {LABELS[source]}
+        </div>
         <div className="flex items-baseline gap-2 min-w-0">
           {resetLabel && s?.status === "ok" && (
             <span className="text-xs text-accent tabular whitespace-nowrap">

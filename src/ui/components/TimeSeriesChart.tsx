@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import type { Source } from "../../adapters/types";
 import { formatTokens } from "../format";
+import { HARNESS_COLOR } from "../harness-colors";
 
 type Point = {
   t: number;
@@ -44,12 +45,6 @@ const HARNESS: Record<Source, string> = {
 };
 
 const HARNESS_ORDER: Source[] = ["claude-code", "opencode", "cursor"];
-
-const HARNESS_COLOR: Record<Source, string> = {
-  "claude-code": "#8b9eff",
-  opencode: "#4fd1c5",
-  cursor: "#f5a524",
-};
 
 function modelKey(p: Pick<Point, "source" | "model">): string {
   return `${p.source}::${p.model}`;

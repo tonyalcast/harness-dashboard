@@ -11,6 +11,9 @@
   --color-warn: #f5a524;
   --color-crit: #ef5a5a;
   --color-accent: #8b9eff;
+  --color-harness-claude: #f0974e;
+  --color-harness-opencode: #3ecf8e;
+  --color-harness-cursor: #6ea8fe;
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 }

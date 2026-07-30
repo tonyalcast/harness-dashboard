@@ -1,5 +1,6 @@
 import type { Source } from "../../adapters/types";
 import { formatTokens, formatUsd } from "../format";
+import { HARNESS_COLOR_CSS } from "../harness-colors";
 import { InfoTip } from "./InfoTip";
 
 type Row = {
@@ -42,7 +43,11 @@ export function HarnessCards({ rows }: { rows: Row[] }) {
           <div key={s} className={`card p-4 ${idle ? "opacity-55" : ""}`}>
             <div className="flex items-baseline justify-between mb-2">
               <div className="metric-label flex items-center gap-1.5">
-                <span>{LABELS[s]}</span>
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full"
+                  style={{ background: HARNESS_COLOR_CSS[s] }}
+                />
+                <span style={{ color: HARNESS_COLOR_CSS[s] }}>{LABELS[s]}</span>
                 <InfoTip text={INFO[s]} align="left" />
               </div>
               <div className="tabular text-xs text-muted">
@@ -60,7 +65,7 @@ export function HarnessCards({ rows }: { rows: Row[] }) {
                 className="h-full rounded-full transition-[width] duration-300"
                 style={{
                   width: `${share * 100}%`,
-                  background: "var(--color-calm)",
+                  background: HARNESS_COLOR_CSS[s],
                 }}
               />
             </div>
