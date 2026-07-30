@@ -298,6 +298,20 @@ export function App() {
             </button>
             <button
               className="focus-ring text-xs text-muted hover:text-text px-2"
+              onClick={() => {
+                const url = `${window.location.origin}/compact`;
+                window.open(
+                  url,
+                  "harness-compact",
+                  "width=220,height=168,menubar=no,toolbar=no,location=no,status=no",
+                );
+              }}
+              title="Open a small always-on-top subscription HUD"
+            >
+              Compact
+            </button>
+            <button
+              className="focus-ring text-xs text-muted hover:text-text px-2"
               onClick={() => setSettingsOpen(true)}
             >
               Settings

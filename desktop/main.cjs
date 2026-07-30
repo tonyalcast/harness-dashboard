@@ -1,9 +1,9 @@
 // Cursor/CI may set this and break Electron's main-process APIs.
 delete process.env.ELECTRON_RUN_AS_NODE;
 
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, dialog, shell, screen } = require("electron");
 const { spawn, execSync } = require("node:child_process");
-const { existsSync, mkdirSync } = require("node:fs");
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { homedir } = require("node:os");
 const { join } = require("node:path");
 const net = require("node:net");
@@ -13,9 +13,15 @@ const { WEB_PORT, APP_PORT } = require("./ports.cjs");
 const ROOT = join(__dirname, "..");
 const HOST = "127.0.0.1";
 const DATA_DIR = join(homedir(), ".harness-dashboard");
+const COMPACT_BOUNDS_PATH = join(DATA_DIR, "compact-bounds.json");
 
 /** @type {import("node:child_process").ChildProcess | null} */
 let serverProcess = null;
+/** @type {import("electron").BrowserWindow | null} */
+let mainWindow = null;
+/** @type {import("electron").BrowserWindow | null} */
+let compactWindow = null;
+let isQuitting = false;
 
 function port() {
   return app.isPackaged ? APP_PORT : WEB_PORT;
@@ -169,6 +175,36 @@ function stopServer() {
   }
 }
 
+function loadCompactBounds() {
+  try {
+    if (!existsSync(COMPACT_BOUNDS_PATH)) return null;
+    return JSON.parse(readFileSync(COMPACT_BOUNDS_PATH, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function saveCompactBounds(win) {
+  try {
+    const b = win.getBounds();
+    writeFileSync(COMPACT_BOUNDS_PATH, JSON.stringify(b, null, 2));
+  } catch {
+    // best-effort
+  }
+}
+
+function defaultCompactBounds() {
+  const display = screen.getPrimaryDisplay().workArea;
+  const width = 220;
+  const height = 168;
+  return {
+    width,
+    height,
+    x: display.x + display.width - width - 16,
+    y: display.y + 16,
+  };
+}
+
 async function createWindow() {
   const url = baseUrl();
   const win = new BrowserWindow({
@@ -183,11 +219,19 @@ async function createWindow() {
       nodeIntegration: false,
     },
   });
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
 
   win.once("ready-to-show", () => win.show());
   await win.loadURL(url);
 
   win.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (target.includes("/compact")) {
+      void openCompactWindow();
+      return { action: "deny" };
+    }
     if (target.startsWith(url)) {
       return { action: "allow" };
     }
@@ -196,15 +240,88 @@ async function createWindow() {
   });
 }
 
+async function openCompactWindow() {
+  if (compactWindow && !compactWindow.isDestroyed()) {
+    compactWindow.show();
+    compactWindow.focus();
+    return compactWindow;
+  }
+
+  const saved = loadCompactBounds();
+  const bounds = saved && typeof saved.width === "number" ? saved : defaultCompactBounds();
+
+  // Ignore oversized saved bounds from the first compact iteration.
+  const width = Math.min(bounds.width || 220, 280);
+  const height = Math.min(bounds.height || 168, 240);
+
+  const win = new BrowserWindow({
+    title: "Harness Compact",
+    width,
+    height,
+    x: bounds.x,
+    y: bounds.y,
+    minWidth: 180,
+    minHeight: 140,
+    maxWidth: 320,
+    maxHeight: 280,
+    show: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    resizable: true,
+    fullscreenable: false,
+    skipTaskbar: true,
+    backgroundColor: "#00000000",
+    vibrancy: "hud",
+    visualEffectState: "active",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  compactWindow = win;
+  win.setAlwaysOnTop(true, "floating");
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  win.on("moved", () => saveCompactBounds(win));
+  win.on("resized", () => saveCompactBounds(win));
+  win.on("closed", () => {
+    if (compactWindow === win) compactWindow = null;
+    // Closing the HUD quits the whole desktop app (and stops the local server)
+    // so nothing stays resident in the background.
+    if (!isQuitting) app.quit();
+  });
+
+  win.once("ready-to-show", () => win.show());
+  await win.loadURL(`${baseUrl()}/compact`);
+
+  win.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (target.startsWith(baseUrl()) && !target.includes("/compact")) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      } else {
+        void createWindow();
+      }
+      return { action: "deny" };
+    }
+    shell.openExternal(target);
+    return { action: "deny" };
+  });
+
+  return win;
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", async () => {
-    const wins = BrowserWindow.getAllWindows();
-    if (wins[0]) {
-      if (wins[0].isMinimized()) wins[0].restore();
-      wins[0].focus();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
     } else if (await portOpen()) {
       await createWindow();
     }
@@ -245,6 +362,7 @@ if (!gotLock) {
   });
 
   app.on("before-quit", () => {
+    isQuitting = true;
     stopServer();
   });
 }

@@ -39,15 +39,22 @@ function fmtUsd(n: number): string {
 export function SubscriptionCards({
   autoLoad = true,
   refreshToken = 0,
+  compact = false,
+  hideHeader = false,
+  onBusyChange,
 }: {
   autoLoad?: boolean;
   refreshToken?: number;
+  compact?: boolean;
+  hideHeader?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [data, setData] = useState<SourceSubscription[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (force = false) => {
     setBusy(true);
+    onBusyChange?.(true);
     try {
       const r = await fetch(`/api/subscription${force ? "?force=1" : ""}`).then((x) =>
         x.json(),
@@ -57,8 +64,9 @@ export function SubscriptionCards({
       setData(null);
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
     }
-  }, []);
+  }, [onBusyChange]);
 
   useEffect(() => {
     if (autoLoad) void load();
@@ -71,28 +79,41 @@ export function SubscriptionCards({
   const bySource = new Map((data ?? []).map((s) => [s.source, s]));
 
   return (
-    <section className="mb-4">
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <SectionLabel info="How much of each harness's subscription you have burned. Every vendor meters differently, so these are three separate readings — not one number split three ways. Measured, not estimated from token counts.">
-          Subscription by harness
-        </SectionLabel>
-        <button
-          className="focus-ring text-xs text-accent hover:underline disabled:opacity-50"
-          disabled={busy}
-          onClick={() => void load(true)}
-        >
-          {busy ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
+    <section className={compact ? "" : "mb-4"}>
+      {!hideHeader && (
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <SectionLabel info="How much of each harness's subscription you have burned. Every vendor meters differently, so these are three separate readings — not one number split three ways. Measured, not estimated from token counts.">
+            Subscription by harness
+          </SectionLabel>
+          <button
+            className="focus-ring text-xs text-accent hover:underline disabled:opacity-50"
+            disabled={busy}
+            onClick={() => void load(true)}
+          >
+            {busy ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div
+        className={
+          compact
+            ? "flex flex-col gap-1.5"
+            : "grid grid-cols-1 sm:grid-cols-3 gap-3"
+        }
+      >
         {data === null && !busy ? (
-          <p className="text-sm text-muted col-span-full py-2">
-            Press Refresh to load subscription meters.
+          <p className="text-[11px] text-muted py-1">
+            {compact ? "Tap ↻" : "Press Refresh to load subscription meters."}
           </p>
         ) : (
           ORDER.map((source) => (
-            <HarnessSubscription key={source} source={source} s={bySource.get(source)} />
+            <HarnessSubscription
+              key={source}
+              source={source}
+              s={bySource.get(source)}
+              compact={compact}
+            />
           ))
         )}
       </div>
@@ -100,12 +121,64 @@ export function SubscriptionCards({
   );
 }
 
-function HarnessSubscription({ source, s }: { source: Source; s?: SourceSubscription }) {
+function HarnessSubscription({
+  source,
+  s,
+  compact = false,
+}: {
+  source: Source;
+  s?: SourceSubscription;
+  compact?: boolean;
+}) {
   const inactive = !s || s.status !== "ok";
   const cursorBuckets = source === "cursor" ? s?.cursorBuckets : undefined;
   const openCodeBuckets = source === "opencode" ? s?.openCodeBuckets : undefined;
   const resetLabel =
     s?.nextResetAt != null ? formatResetAtShort(s.nextResetAt) : null;
+  const shortLabel =
+    source === "claude-code" ? "Claude" : source === "opencode" ? "OpenCode" : "Cursor";
+
+  if (compact) {
+    const pct = s?.primaryPct;
+    const tone =
+      pct == null
+        ? "var(--color-muted)"
+        : pct >= 100
+          ? "var(--color-crit)"
+          : pct >= 80
+            ? "var(--color-warn)"
+            : "var(--color-calm)";
+    const bar = pct == null ? 0 : Math.min(100, Math.max(0, pct));
+
+    return (
+      <div className={`compact-row ${inactive ? "opacity-60" : ""}`}>
+        <div className="flex items-center justify-between gap-2 mb-0.5">
+          <span className="text-[11px] font-medium truncate">{shortLabel}</span>
+          <div className="flex items-center gap-1.5 tabular text-[11px] shrink-0">
+            {s?.status === "ok" && pct != null ? (
+              <span style={{ color: tone }}>{Math.round(pct)}%</span>
+            ) : (
+              <span className="text-muted">
+                {!s ? "…" : s.status === "disabled" ? "—" : s.status}
+              </span>
+            )}
+            {resetLabel && s?.status === "ok" && (
+              <span className="text-muted">{resetLabel}</span>
+            )}
+          </div>
+        </div>
+        <div
+          className="h-1 rounded-full overflow-hidden"
+          style={{ background: "rgba(127, 143, 161, 0.25)" }}
+        >
+          <div
+            className="h-full rounded-full transition-[width] duration-300"
+            style={{ width: `${bar}%`, background: tone }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`card p-4 ${inactive ? "opacity-70" : ""}`}>

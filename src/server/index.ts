@@ -12,6 +12,7 @@ if ((maj ?? 0) < 1 || ((maj ?? 0) === 1 && (min ?? 0) < 4)) {
 import { loadHarnessEnv } from "../load-env";
 import homepage from "../ui/index.html";
 import recordsPage from "../ui/records.html";
+import compactPage from "../ui/compact.html";
 import { ensureDataDir, loadConfig } from "../config";
 import { getDb } from "../db/schema";
 import { loadPricing, refreshPricing } from "../core/pricing";
@@ -55,6 +56,7 @@ const server = Bun.serve({
   routes: {
     "/": homepage,
     "/records": recordsPage,
+    "/compact": compactPage,
   },
   async fetch(req) {
     const api = await handleApi(req);
