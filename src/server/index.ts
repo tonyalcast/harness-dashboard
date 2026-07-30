@@ -63,7 +63,8 @@ const server = Bun.serve({
   async fetch(req) {
     const api = await handleApi(req);
     if (api) return api;
-    return new Response("Not found", { status: 404 });
+    // Let Bun serve bundled UI chunks (/_bun/*, /chunk-*.{css,js}).
+    return undefined;
   },
 });
 

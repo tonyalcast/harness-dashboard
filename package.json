@@ -5,14 +5,19 @@
   "license": "MIT",
   "description": "Local-first dashboard for AI coding-harness token and cost tracking",
   "packageManager": "bun@1.4.0",
+  "main": "desktop/main.cjs",
   "engines": {
     "bun": ">=1.4.0"
   },
   "scripts": {
-    "dev": "bun --hot src/server/index.ts",
-    "start": "NODE_ENV=production bun src/server/index.ts",
+    "build:css": "tailwindcss -i src/ui/styles.css -o src/ui/app.css --minify",
+    "dev": "bun run build:css && bun --hot src/server/index.ts",
+    "start": "bun run build:css && NODE_ENV=production bun src/server/index.ts",
     "test": "bun test",
-    "build": "bun build --compile --outfile=dist/harness-dashboard src/server/index.ts"
+    "postinstall": "node node_modules/electron/install.js",
+    "build": "bun run build:css && bun build --compile --outfile=dist/harness-dashboard src/server/index.ts",
+    "desktop:dev": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "desktop:build": "bun run build && electron-builder --mac dir"
   },
   "dependencies": {
     "bun-plugin-tailwind": "^0.1.2",
@@ -24,10 +29,37 @@
     "tailwindcss": "^4.1.11"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.1.11",
     "@types/bun": "^1.2.18",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.8.3"
+  },
+  "build": {
+    "appId": "com.harness-dashboard.app",
+    "productName": "Harness Dashboard",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "desktop/icon.icns",
+      "target": [
+        "dir"
+      ]
+    },
+    "directories": {
+      "output": "dist/desktop"
+    },
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/harness-dashboard",
+        "to": "harness-dashboard"
+      }
+    ]
   },
   "overrides": {
     "bun": "npm:empty-npm-package@1.0.0"

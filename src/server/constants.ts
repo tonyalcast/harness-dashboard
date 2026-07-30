@@ -1,5 +1,5 @@
-/** Fixed local port — memorable, avoids 3000/8080/5173 collisions. */
-export const PORT = 4000;
+/** Default 4000 for browser/terminal. Desktop app sets HARNESS_DASHBOARD_PORT. */
+export const PORT = Number(process.env.HARNESS_DASHBOARD_PORT) || 4000;
 export const HOST = "127.0.0.1";
 export const WINDOW_MS = 5 * 60 * 60 * 1000;
 export const SSE_HEARTBEAT_MS = 30_000;

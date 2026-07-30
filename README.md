@@ -69,6 +69,18 @@ Port **4000** is fixed on purpose.
 
 Claude Code and OpenCode light up from local logs with zero config. Optional vendor cookies unlock **subscription** meters (and Cursor row-level usage) — see `.env.example`.
 
+### Desktop app (macOS)
+
+Native window with the same UI as the browser.
+
+```bash
+bun install
+bun run desktop:dev      # dev: starts Bun server + Electron window
+bun run desktop:build    # .app in dist/desktop/mac-arm64/
+```
+
+The packaged app embeds the compiled Bun server on port **47831** (browser/terminal dev stays on **4000**). Cookies from your project `.env` are synced to `~/.harness-dashboard/.env` for the packaged server.
+
 ---
 
 ## How cost is calculated
