@@ -2,6 +2,8 @@
 
 **One fuel gauge for every AI coding harness you actually use.**
 
+**v1.1.0** · [Changelog](CHANGELOG.md)
+
 A single provider is no longer enough. Most of us bounce between Claude Code, OpenCode, Cursor — different quotas, different models, different meters — and none of their dashboards talk to each other. Harness Dashboard consolidates **three** of them today into one local view. More harnesses will land as the landscape keeps splitting.
 
 Single user. **macOS only** for now (Windows support planned). `localhost` only. No telemetry. No cloud.
