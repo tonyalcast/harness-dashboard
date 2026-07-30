@@ -8,6 +8,7 @@ import type {
   OpenCodePlan,
   Source,
 } from "./adapters/types";
+import { DEFAULT_DASHBOARD_SECTIONS, mergeDashboardSections } from "./dashboard-sections";
 import { home } from "./adapters/util";
 
 /**
@@ -37,6 +38,8 @@ const DEFAULT_CONFIG: AppConfig = {
     cursor: { enabled: false },
   },
   alerts: { windowPct: 80, weeklyPct: 80, budgetPct: 80 },
+  refreshMode: "live",
+  sections: { ...DEFAULT_DASHBOARD_SECTIONS },
 };
 
 export function ensureDataDir() {
@@ -91,6 +94,8 @@ function mergeConfig(base: AppConfig, patch: Partial<AppConfig>): AppConfig {
       cursor: { ...base.adapters.cursor, ...(patch.adapters?.cursor ?? {}) },
     },
     alerts: { ...base.alerts, ...(patch.alerts ?? {}) },
+    refreshMode: patch.refreshMode ?? base.refreshMode,
+    sections: mergeDashboardSections({ ...base.sections, ...(patch.sections ?? {}) }),
   };
 }
 

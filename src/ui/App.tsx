@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppConfig, FilterPreset, Source } from "../adapters/types";
+import {
+  isSectionVisible,
+  needsHealth,
+  needsSummary,
+} from "../dashboard-sections";
 import { useSSE } from "./hooks/useSSE";
 import { MetricCard } from "./components/MetricCard";
 import { SourceBadges } from "./components/SourceBadges";
@@ -13,6 +18,7 @@ import { Heatmap } from "./components/Heatmap";
 import { TopSessions } from "./components/TopSessions";
 import { WhatIf } from "./components/WhatIf";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { DashboardToolbar } from "./components/DashboardToolbar";
 import { formatTokens, formatUsd } from "./format";
 
 type Summary = {
@@ -69,7 +75,9 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [explainOpen, setExplainOpen] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
-  const [subscriptionKey, setSubscriptionKey] = useState(0);
+  const [subscriptionRefresh, setSubscriptionRefresh] = useState(0);
+  const [consumptionLoaded, setConsumptionLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -82,28 +90,84 @@ export function App() {
     return p.toString();
   }, [preset, sources, custom]);
 
-  const load = useCallback(async () => {
-    const [s, h, c] = await Promise.all([
-      fetch(`/api/summary?${query}`).then((r) => r.json()),
-      fetch("/api/health").then((r) => r.json()),
-      fetch("/api/config").then((r) => r.json()),
-    ]);
-    setSummary(s);
-    setHealth(h);
+  const sections = config?.sections;
+  const liveUpdates = config?.refreshMode === "live";
+  const showSubscriptions = isSectionVisible(sections, "subscriptions");
+  const showConsumption = isSectionVisible(sections, "consumption");
+  const showByHarness = isSectionVisible(sections, "byHarness");
+  const showTimeSeries = isSectionVisible(sections, "timeSeries");
+  const showByModel = isSectionVisible(sections, "byModel");
+  const showHeatmap = isSectionVisible(sections, "heatmap");
+  const showTopSessions = isSectionVisible(sections, "topSessions");
+  const showWhatIf = isSectionVisible(sections, "whatIf");
+  const showConsumptionBlock = needsSummary(sections);
+
+  const fetchConfig = useCallback(async () => {
+    const c = (await fetch("/api/config").then((r) => r.json())) as AppConfig;
     setConfig(c);
-  }, [query]);
+    return c;
+  }, []);
+
+  const fetchSummary = useCallback(
+    async (secs = config?.sections) => {
+      if (!needsSummary(secs)) {
+        setSummary(null);
+        setHealth(null);
+        setConsumptionLoaded(false);
+        return;
+      }
+      const jobs: Promise<void>[] = [
+        fetch(`/api/summary?${query}`)
+          .then((r) => r.json())
+          .then((s: Summary) => {
+            setSummary(s);
+            setConsumptionLoaded(true);
+          }),
+      ];
+      if (needsHealth(secs)) {
+        jobs.push(
+          fetch("/api/health")
+            .then((r) => r.json())
+            .then((h: Health) => setHealth(h)),
+        );
+      } else {
+        setHealth(null);
+      }
+      await Promise.all(jobs);
+    },
+    [query, config?.sections],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchConfig().then((c) => {
+      if (c.refreshMode === "live") void fetchSummary(c.sections);
+    });
+  }, [fetchConfig, fetchSummary]);
 
-  const { status: liveStatus } = useSSE("/api/events", () => {
-    void load();
-  });
-
-  // Budget alerts via Notification API with in-page fallback
   useEffect(() => {
-    if (!summary?.budget.pct || !config) return;
+    if (!config || !needsSummary(config.sections)) return;
+    if (config.refreshMode === "manual" && !consumptionLoaded) return;
+    void fetchSummary(config.sections);
+  }, [query, config, consumptionLoaded, fetchSummary]);
+
+  const reloadVisible = useCallback(async () => {
+    const c = await fetchConfig();
+    if (needsSummary(c.sections)) await fetchSummary(c.sections);
+    if (isSectionVisible(c.sections, "subscriptions")) {
+      setSubscriptionRefresh((n) => n + 1);
+    }
+  }, [fetchConfig, fetchSummary]);
+
+  const { status: liveStatus } = useSSE(
+    "/api/events",
+    () => {
+      void reloadVisible();
+    },
+    liveUpdates,
+  );
+
+  useEffect(() => {
+    if (!summary?.budget.pct || !config || !showConsumption) return;
     const thr = config.alerts.budgetPct;
     if (summary.budget.pct >= 100) {
       notify(`Monthly budget reached (${formatUsd(summary.budget.spentApi)})`, setBanner);
@@ -113,11 +177,31 @@ export function App() {
         setBanner,
       );
     }
-  }, [summary?.budget.pct, config]);
+  }, [summary?.budget.pct, config, showConsumption]);
 
   async function refresh() {
-    await fetch("/api/refresh", { method: "POST" });
-    await load();
+    setRefreshing(true);
+    try {
+      await fetch("/api/refresh", { method: "POST" });
+      await reloadVisible();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function handleConfigChange(next: AppConfig) {
+    const wasLive = config?.refreshMode === "live";
+    setConfig(next);
+    if (next.refreshMode === "live" && !wasLive) {
+      await reloadVisible();
+    }
+    if (!needsSummary(next.sections)) {
+      setSummary(null);
+      setHealth(null);
+      setConsumptionLoaded(false);
+    } else if (next.refreshMode === "live" || consumptionLoaded) {
+      await fetchSummary(next.sections);
+    }
   }
 
   function toggleSource(s: Source) {
@@ -127,7 +211,7 @@ export function App() {
     });
   }
 
-  const empty = !summary || summary.tokens.total === 0;
+  const empty = showConsumptionBlock && (!summary || summary.tokens.total === 0);
 
   return (
     <div className="min-h-screen px-4 py-5 md:px-8 md:py-6 max-w-[1400px] mx-auto">
@@ -137,38 +221,31 @@ export function App() {
           <p className="text-sm text-muted mt-0.5">Fuel gauge for AI coding harnesses</p>
         </div>
         <div className="flex flex-col items-stretch md:items-end gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-md border border-border overflow-hidden">
-              {PRESETS.map((p) => (
-                <button
-                  key={p}
-                  className={`focus-ring px-3 py-1.5 text-xs capitalize transition-colors duration-150 ${
-                    preset === p ? "bg-accent/20 text-text" : "text-muted hover:text-text"
-                  }`}
-                  onClick={() => setPreset(p)}
-                >
-                  {p}
-                </button>
-              ))}
+          {config && (
+            <DashboardToolbar
+              config={config}
+              liveStatus={liveStatus}
+              onConfigChange={handleConfigChange}
+            />
+          )}
+          {showConsumptionBlock && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-md border border-border overflow-hidden">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p}
+                    className={`focus-ring px-3 py-1.5 text-xs capitalize transition-colors duration-150 ${
+                      preset === p ? "bg-accent/20 text-text" : "text-muted hover:text-text"
+                    }`}
+                    onClick={() => setPreset(p)}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
             </div>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted ml-1">
-              <span
-                className={`inline-block w-2 h-2 rounded-full live-dot ${
-                  liveStatus === "live"
-                    ? "bg-calm"
-                    : liveStatus === "reconnecting"
-                      ? "bg-warn"
-                      : "bg-muted"
-                }`}
-              />
-              {liveStatus === "live"
-                ? "live"
-                : liveStatus === "reconnecting"
-                  ? "reconnecting"
-                  : "offline"}
-            </span>
-          </div>
-          {preset === "custom" && (
+          )}
+          {showConsumptionBlock && preset === "custom" && (
             <div className="flex gap-2 text-xs">
               <input
                 type="datetime-local"
@@ -185,35 +262,39 @@ export function App() {
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            {ALL_SOURCES.map((s) => {
-              const active = sources.length === 0 || sources.includes(s);
-              return (
-                <button
-                  key={s}
-                  className={`focus-ring text-xs px-2 py-1 rounded border transition-colors duration-150 ${
-                    active
-                      ? "border-accent/50 text-text"
-                      : "border-border text-muted opacity-60"
-                  }`}
-                  onClick={() => toggleSource(s)}
-                >
-                  {s === "claude-code" ? "CC" : s === "opencode" ? "OC" : "Cursor"}
-                </button>
-              );
-            })}
-            <SourceBadges adapters={health?.adapters ?? []} />
-            <a
-              className="focus-ring text-xs text-accent px-2 hover:underline"
-              href="/records"
-              title="Every ingested message, row by row, with its cost"
-            >
-              Records
-            </a>
+            {showConsumptionBlock &&
+              ALL_SOURCES.map((s) => {
+                const active = sources.length === 0 || sources.includes(s);
+                return (
+                  <button
+                    key={s}
+                    className={`focus-ring text-xs px-2 py-1 rounded border transition-colors duration-150 ${
+                      active
+                        ? "border-accent/50 text-text"
+                        : "border-border text-muted opacity-60"
+                    }`}
+                    onClick={() => toggleSource(s)}
+                  >
+                    {s === "claude-code" ? "CC" : s === "opencode" ? "OC" : "Cursor"}
+                  </button>
+                );
+              })}
+            {showConsumptionBlock && <SourceBadges adapters={health?.adapters ?? []} />}
+            {showConsumptionBlock && (
+              <a
+                className="focus-ring text-xs text-accent px-2 hover:underline"
+                href="/records"
+                title="Every ingested message, row by row, with its cost"
+              >
+                Records
+              </a>
+            )}
             <button
-              className="focus-ring text-xs text-muted hover:text-text px-2"
+              className="focus-ring text-xs text-accent px-2 hover:underline disabled:opacity-50"
+              disabled={refreshing}
               onClick={() => void refresh()}
             >
-              Refresh
+              {refreshing ? "Refreshing…" : "Refresh"}
             </button>
             <button
               className="focus-ring text-xs text-muted hover:text-text px-2"
@@ -221,18 +302,22 @@ export function App() {
             >
               Settings
             </button>
-            <a
-              className="focus-ring text-xs text-accent px-2"
-              href={`/api/export?format=csv&${query}`}
-            >
-              CSV
-            </a>
-            <a
-              className="focus-ring text-xs text-accent px-2"
-              href={`/api/export?format=json&${query}`}
-            >
-              JSON
-            </a>
+            {showConsumptionBlock && (
+              <>
+                <a
+                  className="focus-ring text-xs text-accent px-2"
+                  href={`/api/export?format=csv&${query}`}
+                >
+                  CSV
+                </a>
+                <a
+                  className="focus-ring text-xs text-accent px-2"
+                  href={`/api/export?format=json&${query}`}
+                >
+                  JSON
+                </a>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -246,130 +331,158 @@ export function App() {
         </div>
       )}
 
-      <SubscriptionCards key={subscriptionKey} />
+      {showSubscriptions && (
+        <SubscriptionCards
+          autoLoad={liveUpdates}
+          refreshToken={subscriptionRefresh}
+        />
+      )}
 
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <SectionLabel info="Everything below is derived from the harness log files already on your machine. Open the breakdown to see the exact arithmetic.">
-          Consumption
-        </SectionLabel>
-        <button
-          className="focus-ring text-xs text-accent hover:underline"
-          onClick={() => setExplainOpen(true)}
-        >
-          How is this calculated?
-        </button>
-      </div>
+      {showConsumption && (
+        <>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <SectionLabel info="Everything below is derived from the harness log files already on your machine. Open the breakdown to see the exact arithmetic.">
+              Consumption
+            </SectionLabel>
+            <button
+              className="focus-ring text-xs text-accent hover:underline"
+              onClick={() => setExplainOpen(true)}
+            >
+              How is this calculated?
+            </button>
+          </div>
 
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <MetricCard
-          label="Tokens"
-          value={formatTokens(summary?.tokens.total ?? 0)}
-          info="Total tokens used in the selected range. The breakdown is in (prompt), out (response), cw (cache write) and cr (cache read)."
-          hint={
-            summary
-              ? `${formatTokens(summary.tokens.in)} in · ${formatTokens(summary.tokens.out)} out · ${formatTokens(summary.tokens.cacheWrite)} cw · ${formatTokens(summary.tokens.cacheRead)} cr`
-              : undefined
-          }
-        />
-        <MetricCard
-          label="API-equiv"
-          value={formatUsd(summary?.costApi ?? 0)}
-          info="What these same tokens would cost at public API list prices. It is not what you paid — your subscription is a flat fee."
-          tone="calm"
-        />
-        <MetricCard
-          label="Reported"
-          value={summary?.costReported == null ? "—" : formatUsd(summary.costReported)}
-          info="The cost the harness itself recorded. Shows — when the harness does not report one; it is never made up."
-        />
-        <MetricCard
-          label="Cache saved"
-          value={formatUsd(summary?.cacheSavings ?? 0)}
-          info="Money not spent thanks to prompt caching: what cached reads would have cost at full price, minus what they actually cost."
-          tone="calm"
-        />
-      </section>
+          <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <MetricCard
+              label="Tokens"
+              value={formatTokens(summary?.tokens.total ?? 0)}
+              info="Total tokens used in the selected range. The breakdown is in (prompt), out (response), cw (cache write) and cr (cache read)."
+              hint={
+                summary
+                  ? `${formatTokens(summary.tokens.in)} in · ${formatTokens(summary.tokens.out)} out · ${formatTokens(summary.tokens.cacheWrite)} cw · ${formatTokens(summary.tokens.cacheRead)} cr`
+                  : undefined
+              }
+            />
+            <MetricCard
+              label="API-equiv"
+              value={formatUsd(summary?.costApi ?? 0)}
+              info="What these same tokens would cost at public API list prices. It is not what you paid — your subscription is a flat fee."
+              tone="calm"
+            />
+            <MetricCard
+              label="Reported"
+              value={summary?.costReported == null ? "—" : formatUsd(summary.costReported)}
+              info="The cost the harness itself recorded. Shows — when the harness does not report one; it is never made up."
+            />
+            <MetricCard
+              label="Cache saved"
+              value={formatUsd(summary?.cacheSavings ?? 0)}
+              info="Money not spent thanks to prompt caching: what cached reads would have cost at full price, minus what they actually cost."
+              tone="calm"
+            />
+          </section>
+        </>
+      )}
 
-      <section className="mb-4">
-        <SectionLabel
-          className="mb-2"
-          info="Your usage split across each coding harness: tokens, share of the total, cost and number of sessions in this range."
-        >
-          By harness
-        </SectionLabel>
-        <HarnessCards rows={summary?.bySource ?? []} />
-      </section>
+      {showByHarness && (
+        <section className="mb-4">
+          <SectionLabel
+            className="mb-2"
+            info="Your usage split across each coding harness: tokens, share of the total, cost and number of sessions in this range."
+          >
+            By harness
+          </SectionLabel>
+          <HarnessCards rows={summary?.bySource ?? []} />
+        </section>
+      )}
+
       {empty && (
         <div className="card p-6 mb-4 text-sm text-muted">
           No usage yet for this filter. Run a session in Claude Code or OpenCode, then hit
           Refresh. For Cursor, add <code className="text-text">CURSOR_SESSION_COOKIE</code> to{" "}
-          <code className="text-text">.env</code>.
+          <code className="text-text">.env</code> or Settings.
         </div>
       )}
 
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
-        <div className="card p-4 lg:col-span-2">
-          <SectionLabel
-            className="mb-3"
-            info="Token usage over the selected range. Switch between one line per model × harness, or one line per harness."
-          >
-            Tokens over time
-          </SectionLabel>          <TimeSeriesChart series={summary?.series ?? []} />
-        </div>
-        <div className="card p-4 lg:col-span-1">
-          <SectionLabel
-            className="mb-3"
-            align="right"
-            info="Which models the spend went to. Each row shows API-equivalent cost, its share of the total, and tokens."
-          >
-            By model
-          </SectionLabel>
-          <ByModelChart rows={summary?.byModel ?? []} />
-        </div>
-      </section>
+      {(showTimeSeries || showByModel) && (
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">
+          {showTimeSeries && (
+            <div className={`card p-4 ${showByModel ? "lg:col-span-2" : "lg:col-span-3"}`}>
+              <SectionLabel
+                className="mb-3"
+                info="Token usage over the selected range. Switch between one line per model × harness, or one line per harness."
+              >
+                Tokens over time
+              </SectionLabel>
+              <TimeSeriesChart series={summary?.series ?? []} />
+            </div>
+          )}
+          {showByModel && (
+            <div className={`card p-4 ${showTimeSeries ? "lg:col-span-1" : "lg:col-span-3"}`}>
+              <SectionLabel
+                className="mb-3"
+                align="right"
+                info="Which models the spend went to. Each row shows API-equivalent cost, its share of the total, and tokens."
+              >
+                By model
+              </SectionLabel>
+              <ByModelChart rows={summary?.byModel ?? []} />
+            </div>
+          )}
+        </section>
+      )}
 
-      <section className="card p-4 mb-4">
-        <SectionLabel
-          className="mb-3"
-          info="One square per day over the last year. The brighter the square, the more tokens you used that day."
-        >
-          Activity heatmap
-        </SectionLabel>
-        <Heatmap days={summary?.heatmap ?? []} />
-      </section>
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-6">
-        <div className="card p-4">
+      {showHeatmap && (
+        <section className="card p-4 mb-4">
           <SectionLabel
             className="mb-3"
-            info="The individual sessions that cost the most in this range, with their project and model. Handy for finding what drained your budget."
+            info="One square per day over the last year. The brighter the square, the more tokens you used that day."
           >
-            Top expensive sessions
+            Activity heatmap
           </SectionLabel>
-          <TopSessions rows={summary?.topSessions ?? []} />
-        </div>
-        <div className="card p-4">
-          <SectionLabel
-            className="mb-3"
-            align="right"
-            info="Recalculates this range's cost as if every message had run on another model. A rough estimate of what you would have saved or spent."
-          >
-            What-if model swap
-          </SectionLabel>
-          <WhatIf
-            models={summary?.whatIf.models ?? []}
-            query={query}
-            currentCost={summary?.costApi ?? 0}
-          />
-        </div>
-      </section>
+          <Heatmap days={summary?.heatmap ?? []} />
+        </section>
+      )}
 
-      {summary?.limitedData && (
+      {(showTopSessions || showWhatIf) && (
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-6">
+          {showTopSessions && (
+            <div className="card p-4">
+              <SectionLabel
+                className="mb-3"
+                info="The individual sessions that cost the most in this range, with their project and model. Handy for finding what drained your budget."
+              >
+                Top expensive sessions
+              </SectionLabel>
+              <TopSessions rows={summary?.topSessions ?? []} />
+            </div>
+          )}
+          {showWhatIf && (
+            <div className="card p-4">
+              <SectionLabel
+                className="mb-3"
+                align="right"
+                info="Recalculates this range's cost as if every message had run on another model. A rough estimate of what you would have saved or spent."
+              >
+                What-if model swap
+              </SectionLabel>
+              <WhatIf
+                models={summary?.whatIf.models ?? []}
+                query={query}
+                currentCost={summary?.costApi ?? 0}
+              />
+            </div>
+          )}
+        </section>
+      )}
+
+      {showConsumptionBlock && summary?.limitedData && (
         <p className="text-xs text-muted mb-2">
           Cursor rows are coarse monthly aggregates — treat them as limited data, not
           per-message precision.
         </p>
       )}
-      {summary && summary.unpricedModels.length > 0 && (
+      {showConsumptionBlock && summary && summary.unpricedModels.length > 0 && (
         <p className="text-xs text-warn mb-2">
           Unpriced models (cost counted as $0): {summary.unpricedModels.join(", ")}
         </p>
@@ -377,10 +490,12 @@ export function App() {
 
       <footer className="text-xs text-muted border-t border-border pt-4 pb-8">
         API-equivalent cost is what this usage would cost at public list prices — not what
-        you paid. Binds to 127.0.0.1:{/* port fixed */}4000. Read-only on harness data. Zero
-        telemetry.
+        you paid. Binds to 127.0.0.1
+        {typeof window !== "undefined" ? window.location.port : "4000"}. Read-only on harness
+        data. Zero telemetry.
       </footer>
-      {explainOpen && (
+
+      {explainOpen && showConsumption && (
         <ExplainPanel query={query} onClose={() => setExplainOpen(false)} />
       )}
 
@@ -390,8 +505,8 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
           onSaved={async () => {
             setSettingsOpen(false);
-            setSubscriptionKey((k) => k + 1);
-            await load();
+            setConsumptionLoaded(false);
+            await reloadVisible();
           }}
         />
       )}

@@ -35,6 +35,20 @@ export type HarnessPlans = {
   cursor: CursorPlan;
 };
 
+export type RefreshMode = "manual" | "live";
+
+export type DashboardSection =
+  | "subscriptions"
+  | "consumption"
+  | "byHarness"
+  | "timeSeries"
+  | "byModel"
+  | "heatmap"
+  | "topSessions"
+  | "whatIf";
+
+export type DashboardSections = Record<DashboardSection, boolean>;
+
 export type AppConfig = {
   /**
    * Legacy single plan (Anthropic-oriented). Kept in sync with
@@ -52,6 +66,10 @@ export type AppConfig = {
     cursor: { enabled: boolean };
   };
   alerts: { windowPct: number; weeklyPct: number; budgetPct: number };
+  /** Manual refresh only (default) vs live file-watch + SSE updates. */
+  refreshMode: RefreshMode;
+  /** Toggle dashboard sections; hidden sections skip client fetches. */
+  sections: DashboardSections;
 };
 
 export type FilterPreset = "today" | "week" | "month" | "all" | "custom";

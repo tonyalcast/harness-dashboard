@@ -1,4 +1,5 @@
 import { watch, type FSWatcher } from "fs";
+import { loadConfig } from "../config";
 import { getAdapters } from "./ingest-runner";
 import { WATCH_DEBOUNCE_MS, CURSOR_POLL_MS } from "./constants";
 
@@ -27,12 +28,14 @@ export function startWatching(cb: () => void) {
 
   // Cursor is polled, never watched
   cursorTimer = setInterval(() => {
+    if (loadConfig().refreshMode !== "live") return;
     const hasCursor = getAdapters().some((a) => a.source === "cursor");
     if (hasCursor) schedule();
   }, CURSOR_POLL_MS);
 }
 
 function schedule() {
+  if (loadConfig().refreshMode !== "live") return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;

@@ -45,7 +45,13 @@ function fmtUsd(n: number): string {
   })}`;
 }
 
-export function SubscriptionCards() {
+export function SubscriptionCards({
+  autoLoad = true,
+  refreshToken = 0,
+}: {
+  autoLoad?: boolean;
+  refreshToken?: number;
+}) {
   const [data, setData] = useState<SourceSubscription[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -64,8 +70,12 @@ export function SubscriptionCards() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (autoLoad) void load();
+  }, [autoLoad, load]);
+
+  useEffect(() => {
+    if (refreshToken > 0) void load(true);
+  }, [refreshToken, load]);
 
   const bySource = new Map((data ?? []).map((s) => [s.source, s]));
 
@@ -85,9 +95,15 @@ export function SubscriptionCards() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {ORDER.map((source) => (
-          <HarnessSubscription key={source} source={source} s={bySource.get(source)} />
-        ))}
+        {data === null && !busy ? (
+          <p className="text-sm text-muted col-span-full py-2">
+            Press Refresh to load subscription meters.
+          </p>
+        ) : (
+          ORDER.map((source) => (
+            <HarnessSubscription key={source} source={source} s={bySource.get(source)} />
+          ))
+        )}
       </div>
     </section>
   );

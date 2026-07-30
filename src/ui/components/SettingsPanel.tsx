@@ -7,6 +7,7 @@ import type {
   Source,
 } from "../../adapters/types";
 import { SECRET_KEYS, type HarnessSecrets, type SecretKey } from "../../secrets-keys";
+import { mergeDashboardSections } from "../../dashboard-sections";
 import { SectionLabel } from "./InfoTip";
 
 type Props = {
@@ -91,6 +92,8 @@ function emptySecrets(): Record<SecretKey, string> {
 export function SettingsPanel({ config, onClose, onSaved }: Props) {
   const [form, setForm] = useState<AppConfig>({
     ...config,
+    refreshMode: config.refreshMode ?? "live",
+    sections: mergeDashboardSections(config.sections),
     plans: {
       "claude-code": config.plans?.["claude-code"] ?? config.plan ?? "max5x",
       opencode: config.plans?.opencode ?? "go",

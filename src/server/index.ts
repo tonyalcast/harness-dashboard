@@ -35,18 +35,11 @@ console.log(
 );
 
 async function pushUpdate() {
-  await runIngest();
   const cfg = loadConfig();
-  const summary = buildSummary(
-    {
-      range: { from: 0, to: Date.now() },
-      preset: "all",
-      sources: [],
-    },
-    cfg,
-  );
+  if (cfg.refreshMode !== "live") return;
+
+  await runIngest();
   broadcast("update", { at: Date.now(), hint: "refresh" });
-  void summary;
 }
 
 startWatching(() => {

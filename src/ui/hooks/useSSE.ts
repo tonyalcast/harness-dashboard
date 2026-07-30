@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
-export type LiveStatus = "live" | "reconnecting" | "offline";
+export type LiveStatus = "live" | "reconnecting" | "offline" | "manual";
 
-export function useSSE(url: string, onUpdate: () => void) {
-  const [status, setStatus] = useState<LiveStatus>("offline");
+export function useSSE(url: string, onUpdate: () => void, enabled = true) {
+  const [status, setStatus] = useState<LiveStatus>(enabled ? "offline" : "manual");
   const backoff = useRef(1000);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus("manual");
+      return;
+    }
+
     let es: EventSource | null = null;
     let closed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -43,7 +48,7 @@ export function useSSE(url: string, onUpdate: () => void) {
       if (timer) clearTimeout(timer);
       es?.close();
     };
-  }, [url]);
+  }, [url, enabled]);
 
   return { status };
 }
