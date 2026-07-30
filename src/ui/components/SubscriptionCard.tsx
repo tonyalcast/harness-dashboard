@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { LimitBucket } from "../../adapters/claude-subscription";
 import type { CursorSpendBucket } from "../../adapters/cursor-spending";
 import type { OpenCodeGoBucket } from "../../adapters/opencode-subscription";
-import { formatResetIn } from "../../adapters/opencode-subscription";
+import { formatResetAtShort } from "../../core/reset-format";
 import type { SourceSubscription } from "../../core/subscription";
 import type { Source } from "../../adapters/types";
 import { InfoTip, SectionLabel } from "./InfoTip";
@@ -26,16 +26,7 @@ function prettyKey(key: string): string {
 }
 
 function fmtReset(ts: number): string {
-  const d = new Date(ts);
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return sameDay
-    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : d.toLocaleString([], {
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+  return formatResetAtShort(ts);
 }
 
 function fmtUsd(n: number): string {
@@ -113,15 +104,24 @@ function HarnessSubscription({ source, s }: { source: Source; s?: SourceSubscrip
   const inactive = !s || s.status !== "ok";
   const cursorBuckets = source === "cursor" ? s?.cursorBuckets : undefined;
   const openCodeBuckets = source === "opencode" ? s?.openCodeBuckets : undefined;
+  const resetLabel =
+    s?.nextResetAt != null ? formatResetAtShort(s.nextResetAt) : null;
 
   return (
     <div className={`card p-4 ${inactive ? "opacity-70" : ""}`}>
       <div className="flex items-baseline justify-between gap-2 mb-2">
         <div className="metric-label">{LABELS[source]}</div>
-        {s?.plan && <span className="text-xs text-muted">{s.plan}</span>}
-        {!s?.plan && s?.status === "not-applicable" && (
-          <span className="text-xs text-muted">no quota</span>
-        )}
+        <div className="flex items-baseline gap-2 min-w-0">
+          {resetLabel && s?.status === "ok" && (
+            <span className="text-xs text-accent tabular whitespace-nowrap">
+              Resets in {resetLabel}
+            </span>
+          )}
+          {s?.plan && <span className="text-xs text-muted truncate">{s.plan}</span>}
+          {!s?.plan && s?.status === "not-applicable" && (
+            <span className="text-xs text-muted">no quota</span>
+          )}
+        </div>
       </div>
 
       {!s && <p className="text-sm text-muted">Loading…</p>}
@@ -207,7 +207,9 @@ function OpenCodeBucket({ b }: { b: OpenCodeGoBucket }) {
           style={{ width: `${pct}%`, background: tone }}
         />
       </div>
-      <p className="mt-1 text-xs text-muted">Resets in {formatResetIn(b.resetInSec)}</p>
+      <p className="mt-1 text-xs text-muted">
+        Resets in {formatResetAtShort(Date.now() + b.resetInSec * 1000)}
+      </p>
     </div>
   );
 }
@@ -310,7 +312,7 @@ function Bucket({ b }: { b: LimitBucket }) {
             {b.used.toLocaleString("en-US")} / {b.limit.toLocaleString("en-US")}
           </span>
         )}
-        {b.resetsAt != null && <span>resets {fmtReset(b.resetsAt)}</span>}
+        {b.resetsAt != null && <span>resets in {fmtReset(b.resetsAt)}</span>}
       </div>
     </div>
   );

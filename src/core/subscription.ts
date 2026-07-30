@@ -14,6 +14,7 @@ import {
   type OpenCodeGoBucket,
 } from "../adapters/opencode-subscription";
 import { loadConfig, planLabel } from "../config";
+import { pickPrimaryMeter } from "./reset-format";
 
 export type SubscriptionStatus =
   | "ok"
@@ -35,6 +36,10 @@ export type SourceSubscription = {
   openCodeBuckets?: OpenCodeGoBucket[];
   hardLimitUsd?: number | null;
   fetchedAt: number | null;
+  /** Soonest/primary window reset (epoch ms). */
+  nextResetAt: number | null;
+  /** Utilization % for the primary window (0–100). */
+  primaryPct: number | null;
 };
 
 const CACHE_MS = 60_000;
@@ -64,11 +69,36 @@ export async function buildSubscriptionReport(
     readOpenCode(force),
     readCursor(force),
   ]);
-  const sources = [claude, opencode, cursor].map((s) => ({
-    ...s,
-    plan: planLabel(s.source, cfg.plans[s.source]),
-  }));
+  const sources = [claude, opencode, cursor].map((s) => {
+    const enriched = withPrimaryMeter(s);
+    return {
+      ...enriched,
+      plan: planLabel(s.source, cfg.plans[s.source]),
+    };
+  });
   return { sources };
+}
+
+function withPrimaryMeter(s: SourceSubscription): SourceSubscription {
+  const candidates = [
+    ...s.buckets.map((b) => ({
+      key: b.key,
+      pct: b.pct,
+      resetsAt: b.resetsAt,
+    })),
+    ...(s.openCodeBuckets ?? []).map((b) => ({
+      key: b.key,
+      pct: b.pct,
+      resetsAt: Date.now() + b.resetInSec * 1000,
+    })),
+    ...(s.cursorBuckets ?? []).map((b) => ({
+      key: b.key,
+      pct: b.pct,
+      resetsAt: s.buckets.find((x) => x.key === b.key)?.resetsAt ?? null,
+    })),
+  ];
+  const { nextResetAt, primaryPct } = pickPrimaryMeter(candidates);
+  return { ...s, nextResetAt, primaryPct };
 }
 
 async function readClaude(force: boolean): Promise<SourceSubscription> {
@@ -80,6 +110,8 @@ async function readClaude(force: boolean): Promise<SourceSubscription> {
     plan: u.plan,
     buckets: usefulBuckets(u.buckets),
     fetchedAt: u.fetchedAt,
+    nextResetAt: null,
+    primaryPct: null,
   };
 }
 
@@ -103,6 +135,8 @@ async function readOpenCode(force: boolean): Promise<SourceSubscription> {
     })),
     openCodeBuckets: u.status === "ok" ? u.buckets : u.buckets.length ? u.buckets : undefined,
     fetchedAt: u.fetchedAt,
+    nextResetAt: null,
+    primaryPct: null,
   };
   if (u.status === "ok" || u.status === "disabled") {
     openCodeCache = { at: Date.now(), value };
@@ -142,6 +176,8 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
       plan: null,
       buckets: [],
       fetchedAt: null,
+      nextResetAt: null,
+      primaryPct: null,
     };
   }
 
@@ -181,6 +217,8 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
       cursorBuckets: period.buckets,
       hardLimitUsd: period.hardLimitUsd,
       fetchedAt: Date.now(),
+      nextResetAt: null,
+      primaryPct: null,
     };
     cursorCache = { at: Date.now(), value };
     return value;
@@ -198,6 +236,8 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
       cursorBuckets: cursorCache?.value.cursorBuckets,
       hardLimitUsd: cursorCache?.value.hardLimitUsd,
       fetchedAt: cursorCache?.value.fetchedAt ?? null,
+      nextResetAt: cursorCache?.value.nextResetAt ?? null,
+      primaryPct: cursorCache?.value.primaryPct ?? null,
     };
   }
 }
