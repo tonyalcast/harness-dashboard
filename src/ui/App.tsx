@@ -139,11 +139,12 @@ export function App() {
     [query, config?.sections],
   );
 
+  // Load config once on mount; the effect below fetches the summary once config
+  // is set (live mode). Depending on fetchSummary here would loop, since every
+  // fetchConfig produces a new config.sections and thus a new fetchSummary.
   useEffect(() => {
-    void fetchConfig().then((c) => {
-      if (c.refreshMode === "live") void fetchSummary(c.sections);
-    });
-  }, [fetchConfig, fetchSummary]);
+    void fetchConfig();
+  }, [fetchConfig]);
 
   useEffect(() => {
     if (!config || !needsSummary(config.sections)) return;
