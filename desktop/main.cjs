@@ -340,6 +340,10 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    // Packaged builds get the icon from icon.icns; dev runs need it set explicitly.
+    if (!app.isPackaged && process.platform === "darwin") {
+      app.dock.setIcon(join(__dirname, "icon.png"));
+    }
     try {
       await ensureServer();
       await createWindow();
