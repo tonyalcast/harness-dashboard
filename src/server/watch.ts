@@ -19,7 +19,13 @@ export function startWatching(cb: () => void) {
 
   for (const p of paths) {
     try {
-      const w = watch(p, { recursive: true }, () => schedule());
+      const w = watch(p, { recursive: true }, (_event, filename) => {
+        // SQLite rewrites the -shm index even on reads, so our own ingest of
+        // opencode.db would otherwise retrigger itself forever. Real writes
+        // still land in the .db / -wal files.
+        if (filename && String(filename).endsWith("-shm")) return;
+        schedule();
+      });
       watchers.push(w);
     } catch (err) {
       console.error("[watch] failed for", p, err instanceof Error ? err.message : err);
