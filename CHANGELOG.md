@@ -4,6 +4,17 @@ All notable changes to Harness Dashboard are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Multiple subscription accounts** — Add extra Claude, OpenCode, or Cursor accounts in **Settings → Subscription cookies**, each with its own cookies, optional plan, and display name. Saved in `~/.harness-dashboard/accounts.json`. Every account gets its own card (primary first) and its own row in the compact HUD.
+- **Custom display names** — Rename the primary account of each harness (e.g. "Claude" vs "Claude Work"); names show on the cards and in the compact HUD.
+
+### Changed
+
+- The compact HUD window resizes its height to fit the number of accounts shown.
+
 ## [1.2.0] - 2026-07-29
 
 ### Added

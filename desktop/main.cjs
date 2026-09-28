@@ -193,6 +193,8 @@ function saveCompactBounds(win) {
   }
 }
 
+const COMPACT_MAX_HEIGHT = 640;
+
 function defaultCompactBounds() {
   const display = screen.getPrimaryDisplay().workArea;
   const width = 220;
@@ -263,7 +265,7 @@ async function openCompactWindow() {
     minWidth: 180,
     minHeight: 140,
     maxWidth: 320,
-    maxHeight: 280,
+    maxHeight: COMPACT_MAX_HEIGHT,
     show: false,
     frame: false,
     transparent: true,
@@ -287,6 +289,16 @@ async function openCompactWindow() {
 
   win.on("moved", () => saveCompactBounds(win));
   win.on("resized", () => saveCompactBounds(win));
+  // The HUD reports its content height as "[h=NNN]" in the title so the window
+  // grows or shrinks with the number of subscription accounts shown.
+  win.on("page-title-updated", (event, title) => {
+    event.preventDefault();
+    const match = /\[h=(\d+)\]/.exec(title);
+    if (!match) return;
+    const height = Math.min(COMPACT_MAX_HEIGHT, Math.max(140, Number(match[1])));
+    const [width, current] = win.getContentSize();
+    if (height !== current) win.setContentSize(width, height);
+  });
   win.on("closed", () => {
     if (compactWindow === win) compactWindow = null;
     // Closing the HUD quits the whole desktop app (and stops the local server)

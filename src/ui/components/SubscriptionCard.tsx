@@ -14,6 +14,12 @@ const LABELS: Record<Source, string> = {
   cursor: "Cursor",
 };
 
+const SHORT_LABELS: Record<Source, string> = {
+  "claude-code": "Claude",
+  opencode: "OpenCode",
+  cursor: "Cursor",
+};
+
 const ORDER: Source[] = ["claude-code", "opencode", "cursor"];
 
 /** Turn "five_hour_limit.utilization" into "Five hour limit". */
@@ -77,13 +83,17 @@ export function SubscriptionCards({
     if (refreshToken > 0) void load(true);
   }, [refreshToken, load]);
 
-  const bySource = new Map((data ?? []).map((s) => [s.source, s]));
+  // Before the first reading lands, hold one slot per harness so the layout
+  // doesn't jump; afterwards render every account the server reports.
+  const entries: Array<{ source: Source; s?: SourceSubscription; key: string }> = data
+    ? data.map((s) => ({ source: s.source, s, key: `${s.source}:${s.accountId}` }))
+    : ORDER.map((source) => ({ source, key: source }));
 
   return (
     <section className={compact ? "" : "mb-4"}>
       {!hideHeader && (
         <div className="flex items-center justify-between gap-3 mb-2">
-          <SectionLabel info="How much of each harness's subscription you have burned. Every vendor meters differently, so these are three separate readings — not one number split three ways. Measured, not estimated from token counts.">
+          <SectionLabel info="How much of each harness's subscription you have burned. Every vendor meters differently, so these are separate readings per account — not one number split several ways. Add more accounts in Settings. Measured, not estimated from token counts.">
             Subscription by harness
           </SectionLabel>
           <button
@@ -108,13 +118,8 @@ export function SubscriptionCards({
             {compact ? "Tap ↻" : "Press Refresh to load subscription meters."}
           </p>
         ) : (
-          ORDER.map((source) => (
-            <HarnessSubscription
-              key={source}
-              source={source}
-              s={bySource.get(source)}
-              compact={compact}
-            />
+          entries.map(({ source, s, key }) => (
+            <HarnessSubscription key={key} source={source} s={s} compact={compact} />
           ))
         )}
       </div>
@@ -136,8 +141,8 @@ function HarnessSubscription({
   const openCodeBuckets = source === "opencode" ? s?.openCodeBuckets : undefined;
   const resetLabel =
     s?.nextResetAt != null ? formatResetAtShort(s.nextResetAt) : null;
-  const shortLabel =
-    source === "claude-code" ? "Claude" : source === "opencode" ? "OpenCode" : "Cursor";
+  const shortLabel = s?.label || SHORT_LABELS[source];
+  const fullLabel = s?.label || LABELS[source];
 
   if (compact) {
     const pct = s?.primaryPct;
@@ -160,7 +165,9 @@ function HarnessSubscription({
               className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
               style={{ background: harness }}
             />
-            <span style={{ color: harness }}>{shortLabel}</span>
+            <span className="truncate" style={{ color: harness }} title={shortLabel}>
+              {shortLabel}
+            </span>
           </span>
           <div className="flex items-center gap-1.5 tabular text-[11px] shrink-0">
             {s?.status === "ok" && pct != null ? (
@@ -195,10 +202,11 @@ function HarnessSubscription({
     >
       <div className="flex items-baseline justify-between gap-2 mb-2">
         <div
-          className="metric-label"
+          className="metric-label truncate min-w-0"
           style={{ color: HARNESS_COLOR_CSS[source] }}
+          title={fullLabel}
         >
-          {LABELS[source]}
+          {fullLabel}
         </div>
         <div className="flex items-baseline gap-2 min-w-0">
           {resetLabel && s?.status === "ok" && (

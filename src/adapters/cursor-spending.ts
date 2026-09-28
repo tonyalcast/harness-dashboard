@@ -57,7 +57,8 @@ export const CURSOR_EVENTS_URL =
 export const CURSOR_STRIPE_URL = "https://cursor.com/api/auth/stripe";
 
 const CACHE_MS = 60_000;
-let periodCache: { at: number; value: CursorPeriodUsage } | null = null;
+/** Keyed by session token so several Cursor accounts never share a reading. */
+const periodCaches = new Map<string, { at: number; value: CursorPeriodUsage }>();
 
 function cookieHeaders(cookie: string): HeadersInit {
   return {
@@ -99,6 +100,7 @@ export async function fetchCursorPeriodUsage(
   cookie: string,
   force = false,
 ): Promise<CursorPeriodUsage> {
+  const periodCache = periodCaches.get(cookie);
   if (!force && periodCache && Date.now() - periodCache.at < CACHE_MS) {
     return periodCache.value;
   }
@@ -114,7 +116,7 @@ export async function fetchCursorPeriodUsage(
     hardRaw,
     stripeRaw,
   );
-  periodCache = { at: Date.now(), value };
+  periodCaches.set(cookie, { at: Date.now(), value });
   return value;
 }
 

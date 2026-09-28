@@ -26,8 +26,18 @@ export type SubscriptionUsage = {
   buckets: LimitBucket[];
 };
 
+export type ClaudeCredentials = { cookie: string; org: string };
+
 const CACHE_MS = 60_000;
-let cache: { at: number; value: SubscriptionUsage } | null = null;
+/** Keyed per account so several claude.ai seats never share a reading. */
+const caches = new Map<string, { at: number; value: SubscriptionUsage }>();
+
+/** The primary account, from .env / Settings. */
+export function primaryClaudeCredentials(): ClaudeCredentials | null {
+  const cookie = process.env.CLAUDE_SESSION_COOKIE?.trim();
+  const org = process.env.CLAUDE_ORG_ID?.trim();
+  return cookie && org ? { cookie, org } : null;
+}
 
 export function subscriptionConfigured(): boolean {
   return Boolean(
@@ -37,11 +47,12 @@ export function subscriptionConfigured(): boolean {
 
 class AuthError extends Error {}
 
-export async function fetchSubscriptionUsage(force = false): Promise<SubscriptionUsage> {
-  const cookie = process.env.CLAUDE_SESSION_COOKIE?.trim();
-  const org = process.env.CLAUDE_ORG_ID?.trim();
-
-  if (!cookie || !org) {
+export async function fetchSubscriptionUsage(
+  force = false,
+  creds: ClaudeCredentials | null = primaryClaudeCredentials(),
+  cacheKey = "primary",
+): Promise<SubscriptionUsage> {
+  if (!creds) {
     return {
       status: "disabled",
       message:
@@ -52,17 +63,19 @@ export async function fetchSubscriptionUsage(force = false): Promise<Subscriptio
     };
   }
 
+  const key = `${cacheKey}:${creds.org}:${creds.cookie}`;
+  const cache = caches.get(key);
   if (!force && cache && Date.now() - cache.at < CACHE_MS) return cache.value;
 
   try {
-    const raw = await requestUsage(cookie, org);
+    const raw = await requestUsage(creds.cookie, creds.org);
     const value: SubscriptionUsage = {
       status: "ok",
       fetchedAt: Date.now(),
       plan: findPlan(raw),
       buckets: findLimitBuckets(raw),
     };
-    cache = { at: Date.now(), value };
+    caches.set(key, { at: Date.now(), value });
     return value;
   } catch (err) {
     const auth = err instanceof AuthError;
@@ -82,10 +95,9 @@ export async function fetchSubscriptionUsage(force = false): Promise<Subscriptio
 
 /** Raw payload, for adapting the parser when the shape changes. Never cached. */
 export async function fetchSubscriptionRaw(): Promise<unknown> {
-  const cookie = process.env.CLAUDE_SESSION_COOKIE?.trim();
-  const org = process.env.CLAUDE_ORG_ID?.trim();
-  if (!cookie || !org) return { error: "not configured" };
-  return requestUsage(cookie, org);
+  const creds = primaryClaudeCredentials();
+  if (!creds) return { error: "not configured" };
+  return requestUsage(creds.cookie, creds.org);
 }
 
 async function requestUsage(cookie: string, org: string): Promise<unknown> {

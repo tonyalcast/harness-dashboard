@@ -25,8 +25,11 @@ export type OpenCodeGoUsage = {
   fetchedAt: number | null;
 };
 
+export type OpenCodeCredentials = { workspaceId: string; cookie: string };
+
 const CACHE_MS = 60_000;
-let cache: { at: number; value: OpenCodeGoUsage } | null = null;
+/** Keyed per account so several workspaces never share a reading. */
+const caches = new Map<string, { at: number; value: OpenCodeGoUsage }>();
 
 class OpenCodeAuthError extends Error {}
 export { OpenCodeAuthError };
@@ -38,15 +41,23 @@ export function openCodeGoConfigured(): boolean {
   );
 }
 
+/** The primary account, from .env / Settings. */
+export function primaryOpenCodeCredentials(): OpenCodeCredentials | null {
+  const workspaceId = process.env.OPENCODE_GO_WORKSPACE_ID?.trim();
+  const cookie = process.env.OPENCODE_GO_AUTH_COOKIE?.trim();
+  return workspaceId && cookie ? { workspaceId, cookie } : null;
+}
+
 export function openCodeGoUrl(workspaceId: string): string {
   return `https://opencode.ai/workspace/${workspaceId}/go`;
 }
 
-export async function fetchOpenCodeGoUsage(force = false): Promise<OpenCodeGoUsage> {
-  const workspaceId = process.env.OPENCODE_GO_WORKSPACE_ID?.trim();
-  const cookie = process.env.OPENCODE_GO_AUTH_COOKIE?.trim();
-
-  if (!workspaceId || !cookie) {
+export async function fetchOpenCodeGoUsage(
+  force = false,
+  creds: OpenCodeCredentials | null = primaryOpenCodeCredentials(),
+  cacheKey = "primary",
+): Promise<OpenCodeGoUsage> {
+  if (!creds) {
     return {
       status: "disabled",
       message:
@@ -57,6 +68,9 @@ export async function fetchOpenCodeGoUsage(force = false): Promise<OpenCodeGoUsa
     };
   }
 
+  const { workspaceId, cookie } = creds;
+  const key = `${cacheKey}:${workspaceId}:${cookie}`;
+  const cache = caches.get(key);
   if (!force && cache && Date.now() - cache.at < CACHE_MS) {
     return cache.value;
   }
@@ -73,7 +87,7 @@ export async function fetchOpenCodeGoUsage(force = false): Promise<OpenCodeGoUsa
         buckets: [],
         fetchedAt: Date.now(),
       };
-      cache = { at: Date.now(), value };
+      caches.set(key, { at: Date.now(), value });
       return value;
     }
     const value: OpenCodeGoUsage = {
@@ -82,7 +96,7 @@ export async function fetchOpenCodeGoUsage(force = false): Promise<OpenCodeGoUsa
       buckets,
       fetchedAt: Date.now(),
     };
-    cache = { at: Date.now(), value };
+    caches.set(key, { at: Date.now(), value });
     return value;
   } catch (err) {
     const auth = err instanceof OpenCodeAuthError;

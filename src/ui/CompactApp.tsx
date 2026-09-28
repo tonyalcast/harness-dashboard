@@ -1,12 +1,29 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SubscriptionCards } from "./components/SubscriptionCard";
 
 export function CompactApp() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [busy, setBusy] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  // Each extra account adds a row, so tell the Electron shell how tall the HUD
+  // wants to be. There is no preload bridge; the main process reads this
+  // marker from the title and resizes the window to fit.
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const report = () => {
+      const margin = 8; // .compact-shell has a 4px margin on each side
+      document.title = `Harness — Compact [h=${Math.ceil(el.offsetHeight + margin)}]`;
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    report();
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div className="compact-shell">
+    <div ref={shellRef} className="compact-shell">
       <header className="compact-drag flex items-center justify-between gap-1.5 px-2.5 py-1">
         <span className="text-[10px] uppercase tracking-[0.14em] text-muted select-none">
           Harness

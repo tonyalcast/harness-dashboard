@@ -7,6 +7,8 @@ import type {
   Source,
 } from "../../adapters/types";
 import { SECRET_KEYS, type HarnessSecrets, type SecretKey } from "../../secrets-keys";
+import type { AccountsConfig, ExtraAccount } from "../../accounts-types";
+import { HARNESS_COLOR_CSS } from "../harness-colors";
 import { mergeDashboardSections } from "../../dashboard-sections";
 import { SectionLabel } from "./InfoTip";
 
@@ -50,40 +52,92 @@ const CURSOR_PLANS: { value: CursorPlan; label: string }[] = [
   { value: "custom", label: "Custom" },
 ];
 
-const SECRET_FIELDS: Array<{
+const SHORT_LABEL: Record<Source, string> = {
+  "claude-code": "Claude",
+  opencode: "OpenCode",
+  cursor: "Cursor",
+};
+
+const PLAN_OPTIONS: Record<Source, { value: string; label: string }[]> = {
+  "claude-code": CLAUDE_PLANS,
+  opencode: OPENCODE_PLANS,
+  cursor: CURSOR_PLANS,
+};
+
+type SecretFieldDef = {
   key: SecretKey;
   label: string;
   hint: string;
   multiline?: boolean;
-}> = [
+};
+
+const SECRET_GROUPS: Array<{ source: Source; fields: SecretFieldDef[] }> = [
   {
-    key: "CLAUDE_SESSION_COOKIE",
-    label: "Claude session cookie",
-    hint: "sessionKey from claude.ai cookies",
+    source: "claude-code",
+    fields: [
+      {
+        key: "CLAUDE_SESSION_COOKIE",
+        label: "Claude session cookie",
+        hint: "sessionKey from claude.ai cookies",
+      },
+      {
+        key: "CLAUDE_ORG_ID",
+        label: "Claude org ID",
+        hint: "Organization id from claude.ai usage API",
+      },
+    ],
   },
   {
-    key: "CLAUDE_ORG_ID",
-    label: "Claude org ID",
-    hint: "Organization id from claude.ai usage API",
+    source: "opencode",
+    fields: [
+      {
+        key: "OPENCODE_GO_WORKSPACE_ID",
+        label: "OpenCode workspace ID",
+        hint: "From opencode.ai/workspace/<id>/go",
+      },
+      {
+        key: "OPENCODE_GO_AUTH_COOKIE",
+        label: "OpenCode auth cookie",
+        hint: "auth cookie from opencode.ai",
+        multiline: true,
+      },
+    ],
   },
   {
-    key: "OPENCODE_GO_WORKSPACE_ID",
-    label: "OpenCode workspace ID",
-    hint: "From opencode.ai/workspace/<id>/go",
-  },
-  {
-    key: "OPENCODE_GO_AUTH_COOKIE",
-    label: "OpenCode auth cookie",
-    hint: "auth cookie from opencode.ai",
-    multiline: true,
-  },
-  {
-    key: "CURSOR_SESSION_COOKIE",
-    label: "Cursor session cookie",
-    hint: "WorkosCursorSessionToken from cursor.com",
-    multiline: true,
+    source: "cursor",
+    fields: [
+      {
+        key: "CURSOR_SESSION_COOKIE",
+        label: "Cursor session cookie",
+        hint: "WorkosCursorSessionToken from cursor.com",
+        multiline: true,
+      },
+    ],
   },
 ];
+
+/** Credential fields for an extra account, mirroring the primary ones. */
+const EXTRA_FIELDS: Record<
+  Source,
+  Array<{ key: "cookie" | "orgId" | "workspaceId"; label: string; hint: string; multiline?: boolean }>
+> = {
+  "claude-code": [
+    { key: "cookie", label: "Session cookie", hint: "sessionKey from claude.ai cookies" },
+    { key: "orgId", label: "Org ID", hint: "Organization id from claude.ai usage API" },
+  ],
+  opencode: [
+    { key: "workspaceId", label: "Workspace ID", hint: "From opencode.ai/workspace/<id>/go" },
+    { key: "cookie", label: "Auth cookie", hint: "auth cookie from opencode.ai", multiline: true },
+  ],
+  cursor: [
+    {
+      key: "cookie",
+      label: "Session cookie",
+      hint: "WorkosCursorSessionToken from cursor.com",
+      multiline: true,
+    },
+  ],
+};
 
 function emptySecrets(): Record<SecretKey, string> {
   return Object.fromEntries(SECRET_KEYS.map((key) => [key, ""])) as Record<SecretKey, string>;
@@ -102,7 +156,45 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
   });
   const [secrets, setSecrets] = useState<Record<SecretKey, string>>(emptySecrets);
   const [fromEnv, setFromEnv] = useState<Record<SecretKey, boolean>>(emptySecrets as Record<SecretKey, boolean>);
+  const [accounts, setAccounts] = useState<AccountsConfig>({ primaryLabels: {}, extra: [] });
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((data: AccountsConfig) =>
+        setAccounts({ primaryLabels: data.primaryLabels ?? {}, extra: data.extra ?? [] }),
+      );
+  }, []);
+
+  function addAccount(source: Source) {
+    const n = accounts.extra.filter((a) => a.source === source).length + 2;
+    setAccounts((prev) => ({
+      ...prev,
+      extra: [
+        ...prev.extra,
+        {
+          id: crypto.randomUUID(),
+          source,
+          label: `${SHORT_LABEL[source]} ${n}`,
+          cookie: "",
+          ...(source === "claude-code" ? { orgId: "" } : {}),
+          ...(source === "opencode" ? { workspaceId: "" } : {}),
+        },
+      ],
+    }));
+  }
+
+  function updateAccount(id: string, patch: Partial<ExtraAccount>) {
+    setAccounts((prev) => ({
+      ...prev,
+      extra: prev.extra.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+    }));
+  }
+
+  function removeAccount(id: string) {
+    setAccounts((prev) => ({ ...prev, extra: prev.extra.filter((a) => a.id !== id) }));
+  }
 
   useEffect(() => {
     void fetch("/api/secrets")
@@ -134,6 +226,11 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(secretsPayload),
       }),
+      fetch("/api/accounts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(accounts),
+      }),
       fetch("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -163,25 +260,67 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
         <section className="mb-5">
           <SectionLabel
             className="mb-3"
-            info="Session cookies for subscription meters. Saved locally in ~/.harness-dashboard/secrets.json (never sent anywhere except the vendor APIs). .env still works and takes precedence unless you save a value here."
+            info="Session cookies for subscription meters, plus any extra accounts (e.g. a work seat) with their own display name. Saved locally in ~/.harness-dashboard (never sent anywhere except the vendor APIs). .env still works for the primary account and takes precedence unless you save a value here."
           >
             Subscription cookies
           </SectionLabel>
 
-          <div className="flex flex-col gap-3">
-            {SECRET_FIELDS.map((field) => (
-              <SecretField
-                key={field.key}
-                label={field.label}
-                hint={field.hint}
-                multiline={field.multiline}
-                value={secrets[field.key]}
-                fromEnv={fromEnv[field.key]}
-                onChange={(value) =>
-                  setSecrets((prev) => ({ ...prev, [field.key]: value }))
-                }
-              />
-            ))}
+          <div className="flex flex-col gap-5">
+            {SECRET_GROUPS.map(({ source, fields }) => {
+              const extras = accounts.extra.filter((a) => a.source === source);
+              return (
+                <div key={source} className="flex flex-col gap-3">
+                  <div
+                    className="text-xs font-medium uppercase tracking-wide"
+                    style={{ color: HARNESS_COLOR_CSS[source] }}
+                  >
+                    {HARNESS_LABEL[source]}
+                  </div>
+                  <TextField
+                    label="Display name"
+                    hint={`Shown on cards and the compact HUD. Blank = "${HARNESS_LABEL[source]}".`}
+                    placeholder={HARNESS_LABEL[source]}
+                    value={accounts.primaryLabels[source] ?? ""}
+                    onChange={(value) =>
+                      setAccounts((prev) => ({
+                        ...prev,
+                        primaryLabels: { ...prev.primaryLabels, [source]: value },
+                      }))
+                    }
+                  />
+                  {fields.map((field) => (
+                    <SecretField
+                      key={field.key}
+                      label={field.label}
+                      hint={field.hint}
+                      multiline={field.multiline}
+                      value={secrets[field.key]}
+                      fromEnv={fromEnv[field.key]}
+                      onChange={(value) =>
+                        setSecrets((prev) => ({ ...prev, [field.key]: value }))
+                      }
+                    />
+                  ))}
+
+                  {extras.map((account) => (
+                    <ExtraAccountEditor
+                      key={account.id}
+                      account={account}
+                      onChange={(patch) => updateAccount(account.id, patch)}
+                      onRemove={() => removeAccount(account.id)}
+                    />
+                  ))}
+
+                  <button
+                    type="button"
+                    className="focus-ring self-start text-xs text-accent hover:underline"
+                    onClick={() => addAccount(source)}
+                  >
+                    + Add another {SHORT_LABEL[source]} account
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
           <p className="text-xs text-muted mt-3 leading-relaxed">
@@ -380,6 +519,91 @@ function SecretField({
         />
       )}
       <p className="text-[11px] text-muted mt-1">{hint}</p>
+    </div>
+  );
+}
+
+function TextField({
+  label,
+  hint,
+  placeholder,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  placeholder?: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-muted mb-1">{label}</label>
+      <input
+        className="focus-ring w-full bg-bg border border-border rounded px-3 py-2 text-sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      {hint && <p className="text-[11px] text-muted mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function ExtraAccountEditor({
+  account,
+  onChange,
+  onRemove,
+}: {
+  account: ExtraAccount;
+  onChange: (patch: Partial<ExtraAccount>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      className="rounded border border-border p-3 flex flex-col gap-3"
+      style={{ borderLeft: `2px solid ${HARNESS_COLOR_CSS[account.source]}` }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted truncate">
+          Additional account · {account.label || SHORT_LABEL[account.source]}
+        </span>
+        <button
+          type="button"
+          className="focus-ring text-xs text-muted hover:text-warn shrink-0"
+          onClick={onRemove}
+        >
+          Remove
+        </button>
+      </div>
+      <TextField
+        label="Display name"
+        placeholder={`${SHORT_LABEL[account.source]} Work`}
+        value={account.label}
+        onChange={(label) => onChange({ label })}
+      />
+      {EXTRA_FIELDS[account.source].map((field) => (
+        <SecretField
+          key={field.key}
+          label={field.label}
+          hint={field.hint}
+          multiline={field.multiline}
+          value={account[field.key] ?? ""}
+          fromEnv={false}
+          onChange={(value) => onChange({ [field.key]: value })}
+        />
+      ))}
+      <PlanSelect
+        label="Plan"
+        value={account.plan ?? ""}
+        options={[
+          { value: "", label: "As reported by vendor" },
+          ...PLAN_OPTIONS[account.source],
+        ]}
+        onChange={(plan) => onChange({ plan: plan || undefined })}
+      />
     </div>
   );
 }

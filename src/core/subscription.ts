@@ -1,6 +1,7 @@
 import type { Source } from "../adapters/types";
 import {
   fetchSubscriptionUsage,
+  primaryClaudeCredentials,
   type LimitBucket,
 } from "../adapters/claude-subscription";
 import { CursorAuthError } from "../adapters/cursor";
@@ -11,8 +12,10 @@ import {
 } from "../adapters/cursor-spending";
 import {
   fetchOpenCodeGoUsage,
+  primaryOpenCodeCredentials,
   type OpenCodeGoBucket,
 } from "../adapters/opencode-subscription";
+import { loadAccounts, PRIMARY_ACCOUNT_ID, type ExtraAccount } from "../accounts";
 import { loadConfig, planLabel } from "../config";
 import { pickPrimaryMeter } from "./reset-format";
 
@@ -26,6 +29,10 @@ export type SubscriptionStatus =
 
 export type SourceSubscription = {
   source: Source;
+  /** "primary" for the .env / Settings account, otherwise the extra account id. */
+  accountId: string;
+  /** Custom display name; the UI falls back to the harness name when absent. */
+  label?: string;
   status: SubscriptionStatus;
   message?: string;
   plan: string | null;
@@ -43,8 +50,19 @@ export type SourceSubscription = {
 };
 
 const CACHE_MS = 60_000;
-let cursorCache: { at: number; value: SourceSubscription } | null = null;
-let openCodeCache: { at: number; value: SourceSubscription } | null = null;
+const cursorCaches = new Map<string, { at: number; value: SourceSubscription }>();
+const openCodeCaches = new Map<string, { at: number; value: SourceSubscription }>();
+
+const ORDER: Source[] = ["claude-code", "opencode", "cursor"];
+
+/** One subscription seat to read: the primary one or an extra from accounts.json. */
+type AccountRef = {
+  source: Source;
+  accountId: string;
+  label?: string;
+  primary: boolean;
+  extra?: ExtraAccount;
+};
 
 /**
  * The parser is deliberately permissive, so the same limit often surfaces twice:
@@ -57,26 +75,57 @@ export function usefulBuckets(buckets: LimitBucket[]): LimitBucket[] {
 }
 
 /**
- * Subscription utilization per harness. Each vendor bills differently, so this
- * is three independent readings, not one number split three ways.
+ * Subscription utilization per account. Each vendor bills differently, so these
+ * are independent readings, not one number split several ways. Every harness
+ * always reports its primary account first, followed by any extra accounts.
  */
 export async function buildSubscriptionReport(
   force = false,
 ): Promise<{ sources: SourceSubscription[] }> {
   const cfg = loadConfig();
-  const [claude, opencode, cursor] = await Promise.all([
-    readClaude(force),
-    readOpenCode(force),
-    readCursor(force),
+  const accounts = loadAccounts();
+  const refs: AccountRef[] = ORDER.flatMap((source) => [
+    {
+      source,
+      accountId: PRIMARY_ACCOUNT_ID,
+      label: accounts.primaryLabels[source],
+      primary: true,
+    },
+    ...accounts.extra
+      .filter((a) => a.source === source)
+      .map((a) => ({
+        source,
+        accountId: a.id,
+        label: a.label,
+        primary: false,
+        extra: a,
+      })),
   ]);
-  const sources = [claude, opencode, cursor].map((s) => {
+
+  const readings = await Promise.all(refs.map((ref) => readAccount(ref, force)));
+  const sources = readings.map((s, i) => {
+    const ref = refs[i]!;
     const enriched = withPrimaryMeter(s);
+    const configuredPlan = ref.primary ? cfg.plans[ref.source] : ref.extra?.plan;
     return {
       ...enriched,
-      plan: planLabel(s.source, cfg.plans[s.source]),
+      accountId: ref.accountId,
+      label: ref.label,
+      plan: configuredPlan ? planLabel(ref.source, configuredPlan) : enriched.plan,
     };
   });
   return { sources };
+}
+
+function readAccount(ref: AccountRef, force: boolean): Promise<SourceSubscription> {
+  if (ref.source === "claude-code") return readClaude(ref, force);
+  if (ref.source === "opencode") return readOpenCode(ref, force);
+  return readCursor(ref, force);
+}
+
+/** Where to fix a credential: .env for the primary, Settings for extras. */
+function credentialHint(ref: AccountRef, key: string): string {
+  return ref.primary ? `${key} in \`.env\`` : "the cookie in Settings → Additional accounts";
 }
 
 function withPrimaryMeter(s: SourceSubscription): SourceSubscription {
@@ -101,12 +150,24 @@ function withPrimaryMeter(s: SourceSubscription): SourceSubscription {
   return { ...s, nextResetAt, primaryPct };
 }
 
-async function readClaude(force: boolean): Promise<SourceSubscription> {
-  const u = await fetchSubscriptionUsage(force);
+async function readClaude(ref: AccountRef, force: boolean): Promise<SourceSubscription> {
+  const creds = ref.extra
+    ? ref.extra.cookie && ref.extra.orgId
+      ? { cookie: ref.extra.cookie, org: ref.extra.orgId }
+      : null
+    : primaryClaudeCredentials();
+  const u = await fetchSubscriptionUsage(force, creds, ref.accountId);
   return {
     source: "claude-code",
+    accountId: ref.accountId,
     status: u.status,
-    message: u.message,
+    message: ref.extra
+      ? u.status === "disabled"
+        ? "Add a session cookie and org ID in Settings to read this account."
+        : u.status === "auth"
+          ? `claude.ai session expired. Refresh ${credentialHint(ref, "CLAUDE_SESSION_COOKIE")}.`
+          : u.message
+      : u.message,
     plan: u.plan,
     buckets: usefulBuckets(u.buckets),
     fetchedAt: u.fetchedAt,
@@ -115,16 +176,30 @@ async function readClaude(force: boolean): Promise<SourceSubscription> {
   };
 }
 
-async function readOpenCode(force: boolean): Promise<SourceSubscription> {
+async function readOpenCode(ref: AccountRef, force: boolean): Promise<SourceSubscription> {
+  const creds = ref.extra
+    ? ref.extra.cookie && ref.extra.workspaceId
+      ? { cookie: ref.extra.cookie, workspaceId: ref.extra.workspaceId }
+      : null
+    : primaryOpenCodeCredentials();
+  const cacheKey = `${ref.accountId}:${creds?.workspaceId ?? ""}:${creds?.cookie ?? ""}`;
+  const openCodeCache = openCodeCaches.get(cacheKey);
   if (!force && openCodeCache && Date.now() - openCodeCache.at < CACHE_MS) {
     return openCodeCache.value;
   }
 
-  const u = await fetchOpenCodeGoUsage(force);
+  const u = await fetchOpenCodeGoUsage(force, creds, ref.accountId);
   const value: SourceSubscription = {
     source: "opencode",
+    accountId: ref.accountId,
     status: u.status,
-    message: u.message,
+    message: ref.extra
+      ? u.status === "disabled"
+        ? "Add a workspace ID and auth cookie in Settings to read this account."
+        : u.status === "auth"
+          ? `OpenCode session expired. Refresh ${credentialHint(ref, "OPENCODE_GO_AUTH_COOKIE")}.`
+          : u.message
+      : u.message,
     plan: u.plan,
     buckets: u.buckets.map((b) => ({
       key: b.key,
@@ -139,7 +214,7 @@ async function readOpenCode(force: boolean): Promise<SourceSubscription> {
     primaryPct: null,
   };
   if (u.status === "ok" || u.status === "disabled") {
-    openCodeCache = { at: Date.now(), value };
+    openCodeCaches.set(cacheKey, { at: Date.now(), value });
   }
   return value;
 }
@@ -166,13 +241,16 @@ export function describeCursorNoQuota(raw: Record<string, unknown>): string {
   }${sinceText} and no request cap on this plan, so there is no quota bar to show.`;
 }
 
-async function readCursor(force: boolean): Promise<SourceSubscription> {
-  const cookie = process.env.CURSOR_SESSION_COOKIE?.trim();
+async function readCursor(ref: AccountRef, force: boolean): Promise<SourceSubscription> {
+  const cookie = ref.extra ? ref.extra.cookie : process.env.CURSOR_SESSION_COOKIE?.trim();
   if (!cookie) {
     return {
       source: "cursor",
+      accountId: ref.accountId,
       status: "disabled",
-      message: "Set CURSOR_SESSION_COOKIE in .env to read your Cursor quota.",
+      message: ref.extra
+        ? "Add a session cookie in Settings to read this account."
+        : "Set CURSOR_SESSION_COOKIE in .env to read your Cursor quota.",
       plan: null,
       buckets: [],
       fetchedAt: null,
@@ -181,6 +259,8 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
     };
   }
 
+  const cacheKey = `${ref.accountId}:${cookie}`;
+  const cursorCache = cursorCaches.get(cacheKey);
   if (!force && cursorCache && Date.now() - cursorCache.at < CACHE_MS) {
     return cursorCache.value;
   }
@@ -211,6 +291,7 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
 
     const value: SourceSubscription = {
       source: "cursor",
+      accountId: ref.accountId,
       status: "ok",
       plan: period.plan,
       buckets: usefulBuckets(buckets),
@@ -220,15 +301,16 @@ async function readCursor(force: boolean): Promise<SourceSubscription> {
       nextResetAt: null,
       primaryPct: null,
     };
-    cursorCache = { at: Date.now(), value };
+    cursorCaches.set(cacheKey, { at: Date.now(), value });
     return value;
   } catch (err) {
     const auth = err instanceof CursorAuthError;
     return {
       source: "cursor",
+      accountId: ref.accountId,
       status: auth ? "auth" : "error",
       message: auth
-        ? "Cursor session expired. Refresh CURSOR_SESSION_COOKIE in `.env`."
+        ? `Cursor session expired. Refresh ${credentialHint(ref, "CURSOR_SESSION_COOKIE")}.`
         : "Cursor spending request failed. The unofficial API may have changed.",
       // Keep the last good reading rather than blanking the card.
       plan: cursorCache?.value.plan ?? null,

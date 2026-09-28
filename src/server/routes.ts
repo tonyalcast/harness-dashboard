@@ -10,6 +10,7 @@ import { buildSubscriptionReport } from "../core/subscription";
 import { buildExplain } from "../core/explain";
 import { getUnpricedModels, loadPricing, lookupPriceDetail } from "../core/pricing";
 import { currentWindowState, readReportedClaudeWindow } from "../core/window";
+import { loadAccounts, saveAccounts } from "../accounts";
 import { loadConfig, planMultiplier, updateConfig } from "../config";
 import { refreshHarnessCredentials } from "../load-env";
 import {
@@ -171,6 +172,16 @@ export async function handleApi(req: Request): Promise<Response | null> {
     const next = saveSecrets({ ...stored, ...body });
     refreshHarnessCredentials();
     return json({ secrets: next, active: secretsSnapshot().active });
+  }
+
+  // Extra subscription accounts + custom display names. Like /api/secrets this
+  // returns cookies, which is fine only because the server binds to 127.0.0.1.
+  if (url.pathname === "/api/accounts" && req.method === "GET") {
+    return json(loadAccounts());
+  }
+
+  if (url.pathname === "/api/accounts" && req.method === "PUT") {
+    return json(saveAccounts(await req.json()));
   }
 
   if (url.pathname === "/api/calibrate" && req.method === "POST") {

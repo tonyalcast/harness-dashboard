@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { __parse, subscriptionConfigured } from "../src/adapters/claude-subscription";
 
 const { findBuckets, findPlan, toEpoch } = __parse;
@@ -105,9 +108,19 @@ describe("configuration gate", () => {
 
 describe("per-harness report", () => {
   test("always returns all three harnesses in a stable order", async () => {
-    const { buildSubscriptionReport } = await import("../src/core/subscription");
-    const r = await buildSubscriptionReport();
-    expect(r.sources.map((s) => s.source)).toEqual(["claude-code", "opencode", "cursor"]);
+    // Isolate from a real ~/.harness-dashboard that may hold extra accounts.
+    const prevDir = process.env.HARNESS_DASHBOARD_DATA_DIR;
+    const tmp = mkdtempSync(join(tmpdir(), "harness-sub-"));
+    process.env.HARNESS_DASHBOARD_DATA_DIR = tmp;
+    try {
+      const { buildSubscriptionReport } = await import("../src/core/subscription");
+      const r = await buildSubscriptionReport();
+      expect(r.sources.map((s) => s.source)).toEqual(["claude-code", "opencode", "cursor"]);
+    } finally {
+      if (prevDir === undefined) delete process.env.HARNESS_DASHBOARD_DATA_DIR;
+      else process.env.HARNESS_DASHBOARD_DATA_DIR = prevDir;
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test("OpenCode reports no quota rather than a fake zero when unconfigured", async () => {

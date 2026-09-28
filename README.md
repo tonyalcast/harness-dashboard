@@ -119,6 +119,10 @@ Copy `.env.example` → `.env` and fill only what you need — or enter the same
 | **OpenCode Go** | `OPENCODE_GO_WORKSPACE_ID` + `OPENCODE_GO_AUTH_COOKIE` | Workspace `/go` page |
 | **Cursor** | `CURSOR_SESSION_COOKIE` | Spending + usage-events APIs |
 
+### Multiple accounts and custom names
+
+Have a personal and a work seat? In **Settings → Subscription cookies**, each harness has a **Display name** for its primary account and a **+ Add another … account** button. Extra accounts get their own name (e.g. "Claude Work"), cookies and optional plan; they're saved in `~/.harness-dashboard/accounts.json` (mode `0600`). Each one gets its own card after the primary in **Subscription by harness**, and its own row in the compact HUD, which grows to fit. Local token tracking (consumption, charts) is unchanged and still comes from the primary account per harness.
+
 How to grab each value is spelled out in `.env.example` (DevTools → cookies / network). Cookies are **never** logged, written to SQLite, returned by any API route, or rendered in the UI.
 
 These are undocumented endpoints. They can break without notice. On failure the card keeps the last good reading and says why.
