@@ -64,10 +64,20 @@ const PLAN_OPTIONS: Record<Source, { value: string; label: string }[]> = {
   cursor: CURSOR_PLANS,
 };
 
+/**
+ * A claude.ai login can belong to several orgs (chat, Console/API, personal),
+ * and only the chat org of the paid seat reports usage limits.
+ */
+const CLAUDE_ORG_HELP =
+  "On claude.ai, open Settings → Usage with DevTools → Network open and copy the UUID from /api/organizations/<id>/usage. " +
+  "If your login lists several orgs at claude.ai/api/organizations, pick the one whose capabilities include \"chat\" and holds your Pro/Max/Team seat — not the Console org (capabilities: [\"api\"]), which is rejected.";
+
 type SecretFieldDef = {
   key: SecretKey;
   label: string;
   hint: string;
+  /** Longer guidance shown under the input; the hint stays the placeholder. */
+  help?: string;
   multiline?: boolean;
 };
 
@@ -84,6 +94,7 @@ const SECRET_GROUPS: Array<{ source: Source; fields: SecretFieldDef[] }> = [
         key: "CLAUDE_ORG_ID",
         label: "Claude org ID",
         hint: "Organization id from claude.ai usage API",
+        help: CLAUDE_ORG_HELP,
       },
     ],
   },
@@ -119,11 +130,22 @@ const SECRET_GROUPS: Array<{ source: Source; fields: SecretFieldDef[] }> = [
 /** Credential fields for an extra account, mirroring the primary ones. */
 const EXTRA_FIELDS: Record<
   Source,
-  Array<{ key: "cookie" | "orgId" | "workspaceId"; label: string; hint: string; multiline?: boolean }>
+  Array<{
+    key: "cookie" | "orgId" | "workspaceId";
+    label: string;
+    hint: string;
+    help?: string;
+    multiline?: boolean;
+  }>
 > = {
   "claude-code": [
     { key: "cookie", label: "Session cookie", hint: "sessionKey from claude.ai cookies" },
-    { key: "orgId", label: "Org ID", hint: "Organization id from claude.ai usage API" },
+    {
+      key: "orgId",
+      label: "Org ID",
+      hint: "Organization id from claude.ai usage API",
+      help: CLAUDE_ORG_HELP,
+    },
   ],
   opencode: [
     { key: "workspaceId", label: "Workspace ID", hint: "From opencode.ai/workspace/<id>/go" },
@@ -293,6 +315,7 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
                       key={field.key}
                       label={field.label}
                       hint={field.hint}
+                      help={field.help}
                       multiline={field.multiline}
                       value={secrets[field.key]}
                       fromEnv={fromEnv[field.key]}
@@ -475,6 +498,7 @@ export function SettingsPanel({ config, onClose, onSaved }: Props) {
 function SecretField({
   label,
   hint,
+  help,
   value,
   fromEnv,
   multiline,
@@ -482,6 +506,7 @@ function SecretField({
 }: {
   label: string;
   hint: string;
+  help?: string;
   value: string;
   fromEnv: boolean;
   multiline?: boolean;
@@ -518,7 +543,7 @@ function SecretField({
           spellCheck={false}
         />
       )}
-      <p className="text-[11px] text-muted mt-1">{hint}</p>
+      <p className="text-[11px] text-muted mt-1">{help ?? hint}</p>
     </div>
   );
 }
@@ -589,6 +614,7 @@ function ExtraAccountEditor({
           key={field.key}
           label={field.label}
           hint={field.hint}
+          help={field.help}
           multiline={field.multiline}
           value={account[field.key] ?? ""}
           fromEnv={false}

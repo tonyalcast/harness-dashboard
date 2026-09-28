@@ -45,7 +45,37 @@ export function subscriptionConfigured(): boolean {
   );
 }
 
-class AuthError extends Error {}
+/**
+ * Accept whatever the user copied out of DevTools: the bare value, a
+ * `sessionKey=…` pair, or the whole Cookie header. Sending the prefix twice
+ * (`sessionKey=sessionKey=…`) is rejected by claude.ai as an invalid session.
+ */
+export function normalizeSessionKey(input: string): string {
+  let v = input.trim().replace(/^cookie:\s*/i, "");
+  const pair = v.split(";").map((p) => p.trim()).find((p) => /^sessionKey=/i.test(p));
+  if (pair) v = pair.slice(pair.indexOf("=") + 1);
+  v = v.trim().replace(/^["']|["']$/g, "");
+  try {
+    v = decodeURIComponent(v);
+  } catch {
+    // not URL-encoded
+  }
+  return v.trim();
+}
+
+class AuthError extends Error {
+  /** claude.ai's `error.details.error_code`, e.g. "account_session_invalid". */
+  constructor(readonly code: string | null, message: string | null) {
+    super(message ?? "unauthorized");
+  }
+  /** Only this code really means the cookie is bad; anything else is usually the org ID. */
+  get sessionInvalid() {
+    // A wrong org (e.g. the Console/API org) comes back as a bare 403
+    // "Invalid authorization for organization" with no error_code.
+    if (this.code === null) return !/organization/i.test(this.message);
+    return this.code === "account_session_invalid";
+  }
+}
 
 export async function fetchSubscriptionUsage(
   force = false,
@@ -82,7 +112,9 @@ export async function fetchSubscriptionUsage(
     const value: SubscriptionUsage = {
       status: auth ? "auth" : "error",
       message: auth
-        ? "claude.ai session expired. Refresh CLAUDE_SESSION_COOKIE in `.env`."
+        ? err.sessionInvalid
+          ? "claude.ai session expired. Refresh CLAUDE_SESSION_COOKIE in `.env`."
+          : `claude.ai rejected the request (${err.code ?? err.message}). Check that the org ID belongs to this session's account.`
         : "Usage request failed. This undocumented endpoint may have changed.",
       // Keep the last good reading rather than blanking the card.
       fetchedAt: cache?.value.fetchedAt ?? null,
@@ -105,13 +137,18 @@ async function requestUsage(cookie: string, org: string): Promise<unknown> {
     `https://claude.ai/api/organizations/${encodeURIComponent(org)}/usage`,
     {
       headers: {
-        Cookie: `sessionKey=${cookie}`,
+        Cookie: `sessionKey=${normalizeSessionKey(cookie)}`,
         Accept: "application/json",
       },
       signal: AbortSignal.timeout(12_000),
     },
   );
-  if (res.status === 401 || res.status === 403) throw new AuthError();
+  if (res.status === 401 || res.status === 403) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: { message?: string; details?: { error_code?: string } };
+    } | null;
+    throw new AuthError(body?.error?.details?.error_code ?? null, body?.error?.message ?? null);
+  }
   if (!res.ok) throw new Error(`status ${res.status}`);
   return res.json();
 }

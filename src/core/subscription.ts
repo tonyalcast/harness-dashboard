@@ -164,7 +164,7 @@ async function readClaude(ref: AccountRef, force: boolean): Promise<SourceSubscr
     message: ref.extra
       ? u.status === "disabled"
         ? "Add a session cookie and org ID in Settings to read this account."
-        : u.status === "auth"
+        : u.status === "auth" && u.message?.includes("session expired")
           ? `claude.ai session expired. Refresh ${credentialHint(ref, "CLAUDE_SESSION_COOKIE")}.`
           : u.message
       : u.message,

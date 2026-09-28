@@ -2,9 +2,33 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { __parse, subscriptionConfigured } from "../src/adapters/claude-subscription";
+import {
+  __parse,
+  normalizeSessionKey,
+  subscriptionConfigured,
+} from "../src/adapters/claude-subscription";
 
 const { findBuckets, findPlan, toEpoch } = __parse;
+
+describe("sessionKey normalization", () => {
+  test("keeps a bare value", () => {
+    expect(normalizeSessionKey("  sk-ant-sid01-abc  ")).toBe("sk-ant-sid01-abc");
+  });
+
+  test("strips a sessionKey= prefix", () => {
+    expect(normalizeSessionKey("sessionKey=sk-ant-sid01-abc")).toBe("sk-ant-sid01-abc");
+  });
+
+  test("extracts it from a full Cookie header", () => {
+    expect(
+      normalizeSessionKey("Cookie: anthropic-device-id=x; sessionKey=sk-ant-sid01-abc; lastActiveOrg=y"),
+    ).toBe("sk-ant-sid01-abc");
+  });
+
+  test("drops quotes and URL encoding", () => {
+    expect(normalizeSessionKey('"sk-ant-sid01-a%2Bb"')).toBe("sk-ant-sid01-a+b");
+  });
+});
 
 describe("subscription payload parsing", () => {
   test("reads a 0-100 utilization with a reset timestamp", () => {
